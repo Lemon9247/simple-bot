@@ -18,6 +18,11 @@ export interface Listener {
     send(origin: MessageOrigin, text: string): Promise<void>;
 }
 
+export interface ToolCallInfo {
+    toolName: string;
+    args: Record<string, any>;
+}
+
 export interface Config {
     pi: {
         cwd: string;

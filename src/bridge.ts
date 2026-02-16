@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
+import type { ToolCallInfo } from "./types.js";
 import * as logger from "./logger.js";
 
 export interface BridgeOptions {
@@ -10,9 +11,14 @@ export interface BridgeOptions {
     spawnFn?: typeof spawn;
 }
 
+export interface SendOptions {
+    onToolStart?: (info: ToolCallInfo) => void;
+}
+
 interface Pending {
     resolve: (data: any) => void;
     reject: (err: Error) => void;
+    onToolStart?: (info: ToolCallInfo) => void;
 }
 
 export class Bridge extends EventEmitter {
@@ -52,12 +58,12 @@ export class Bridge extends EventEmitter {
         });
     }
 
-    sendMessage(text: string): Promise<string> {
+    sendMessage(text: string, options?: SendOptions): Promise<string> {
         if (!this.proc?.stdin?.writable) {
             return Promise.reject(new Error("Pi process not running"));
         }
         return new Promise((resolve, reject) => {
-            const entry: Pending = { resolve, reject };
+            const entry: Pending = { resolve, reject, onToolStart: options?.onToolStart };
             this.responseQueue.push(entry);
             // Use prompt with followUp streaming behavior:
             // - if pi is idle: starts processing immediately
@@ -124,6 +130,17 @@ export class Bridge extends EventEmitter {
             this.rpcPending.delete(event.id);
             event.success ? pending.resolve(event.data) : pending.reject(new Error(event.error ?? "RPC error"));
             return;
+        }
+
+        // Tool execution started — notify current message handler
+        if (event.type === "tool_execution_start") {
+            const current = this.responseQueue[0];
+            if (current?.onToolStart) {
+                current.onToolStart({
+                    toolName: event.toolName,
+                    args: event.args ?? {},
+                });
+            }
         }
 
         // Accumulate assistant text deltas

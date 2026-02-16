@@ -3,11 +3,17 @@ import { EventEmitter } from "node:events";
 import { vi } from "vitest";
 import type { Listener, IncomingMessage, MessageOrigin } from "../src/types.js";
 
+export interface MockToolCall {
+    toolName: string;
+    args: Record<string, any>;
+}
+
 /**
  * Creates a fake child process that speaks pi's RPC protocol.
  * Responds to follow_up/prompt with a canned agent response.
+ * Optionally emits tool_execution_start events before the response.
  */
-export function createMockProcess(responseText = "Hello world!") {
+export function createMockProcess(responseText = "Hello world!", toolCalls?: MockToolCall[]) {
     const stdin = new PassThrough();
     const stdout = new PassThrough();
     const stderr = new PassThrough();
@@ -48,6 +54,30 @@ export function createMockProcess(responseText = "Hello world!") {
             // Simulate agent processing for message commands
             if (cmd.type === "follow_up" || cmd.type === "prompt") {
                 stdout.write(JSON.stringify({ type: "agent_start" }) + "\n");
+
+                // Emit tool events if provided
+                if (toolCalls) {
+                    for (const tc of toolCalls) {
+                        const toolCallId = `tc-${Math.random().toString(36).slice(2, 10)}`;
+                        stdout.write(
+                            JSON.stringify({
+                                type: "tool_execution_start",
+                                toolCallId,
+                                toolName: tc.toolName,
+                                args: tc.args,
+                            }) + "\n"
+                        );
+                        stdout.write(
+                            JSON.stringify({
+                                type: "tool_execution_end",
+                                toolCallId,
+                                toolName: tc.toolName,
+                                isError: false,
+                            }) + "\n"
+                        );
+                    }
+                }
+
                 stdout.write(
                     JSON.stringify({
                         type: "message_update",

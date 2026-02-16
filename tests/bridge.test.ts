@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { Bridge } from "../src/bridge.js";
+import type { ToolCallInfo } from "../src/types.js";
 import { createMockProcess } from "./helpers.js";
 
 describe("Bridge", () => {
@@ -130,6 +131,37 @@ describe("Bridge", () => {
         proc.emit("exit", 1, null);
 
         await expect(promise).rejects.toThrow("Pi exited");
+    });
+
+    it("calls onToolStart for tool_execution_start events", async () => {
+        const toolCalls = [
+            { toolName: "read", args: { path: "src/main.ts" } },
+            { toolName: "bash", args: { command: "npm test" } },
+        ];
+        const { spawnFn } = createMockProcess("Done!", toolCalls);
+        bridge = new Bridge({ cwd: "/tmp", spawnFn });
+        bridge.start();
+
+        const received: ToolCallInfo[] = [];
+        const response = await bridge.sendMessage("test", {
+            onToolStart: (info) => received.push(info),
+        });
+
+        expect(response).toBe("Done!");
+        expect(received).toHaveLength(2);
+        expect(received[0]).toEqual({ toolName: "read", args: { path: "src/main.ts" } });
+        expect(received[1]).toEqual({ toolName: "bash", args: { command: "npm test" } });
+    });
+
+    it("does not call onToolStart when no callback provided", async () => {
+        const toolCalls = [{ toolName: "read", args: { path: "file.ts" } }];
+        const { spawnFn } = createMockProcess("Done!", toolCalls);
+        bridge = new Bridge({ cwd: "/tmp", spawnFn });
+        bridge.start();
+
+        // Should not throw — just ignores tool events
+        const response = await bridge.sendMessage("test");
+        expect(response).toBe("Done!");
     });
 
     it("emits events from pi", async () => {
