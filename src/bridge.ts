@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
+import * as logger from "./logger.js";
 
 export interface BridgeOptions {
     cwd: string;
@@ -39,7 +40,7 @@ export class Bridge extends EventEmitter {
 
         this.proc.stdout!.on("data", (chunk: Buffer) => this.onData(chunk.toString()));
         this.proc.stderr!.on("data", (chunk: Buffer) => {
-            console.error(`[pi] ${chunk.toString().trim()}`);
+            logger.error("Pi stderr output", { output: chunk.toString().trim() });
         });
         this.proc.on("exit", (code, signal) => {
             this.rejectAll(new Error(`Pi exited (code=${code}, signal=${signal})`));

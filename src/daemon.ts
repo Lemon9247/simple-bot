@@ -1,5 +1,6 @@
 import { Bridge } from "./bridge.js";
 import type { Config, Listener, IncomingMessage, MessageOrigin } from "./types.js";
+import * as logger from "./logger.js";
 
 export class Daemon {
     private config: Config;
@@ -24,7 +25,7 @@ export class Daemon {
         this.bridge.start();
         this.bridge.on("exit", (code: number) => {
             if (this.stopping) return;
-            console.error(`Pi exited unexpectedly (code=${code}), shutting down`);
+            logger.error("Pi exited unexpectedly, shutting down", { code });
             this.stop().then(() => process.exit(1));
         });
 
@@ -33,7 +34,7 @@ export class Daemon {
             await listener.connect();
         }
 
-        console.log(`simple-bot started (${this.listeners.length} listener(s))`);
+        logger.info("simple-bot started", { listeners: this.listeners.length });
     }
 
     async stop(): Promise<void> {
@@ -46,7 +47,7 @@ export class Daemon {
 
     private async handleMessage(msg: IncomingMessage): Promise<void> {
         if (!this.config.security.allowed_users.includes(msg.sender)) {
-            console.log(`Ignored message from ${msg.sender}`);
+            logger.info("Ignored message from unauthorized user", { sender: msg.sender });
             return;
         }
 
@@ -66,7 +67,7 @@ export class Daemon {
                 await listener.send(origin, response);
             }
         } catch (err) {
-            console.error(`Failed to process message:`, err);
+            logger.error("Failed to process message", { error: String(err) });
         }
     }
 }
