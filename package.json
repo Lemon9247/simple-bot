@@ -7,7 +7,19 @@
     "license": "MIT",
     "scripts": {
         "build": "tsc",
-        "dev": "tsx src/daemon.ts",
-        "test": "vitest"
+        "dev": "tsx src/main.ts",
+        "start": "node dist/main.js",
+        "test": "vitest run",
+        "test:watch": "vitest"
+    },
+    "dependencies": {
+        "js-yaml": "^4.1.1"
+    },
+    "devDependencies": {
+        "@types/js-yaml": "^4.0.9",
+        "@types/node": "^25.2.3",
+        "tsx": "^4.21.0",
+        "typescript": "^5.9.3",
+        "vitest": "^4.0.18"
     }
 }

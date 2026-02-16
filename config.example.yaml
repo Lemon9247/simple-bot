@@ -1,0 +1,18 @@
+pi:
+    cwd: ~/Documents/Obsidian/Claude
+
+matrix:
+    homeserver: https://athena.local
+    user: "@hades:athena"
+    token: "env:MATRIX_TOKEN"
+
+security:
+    allowed_users:
+        - "@willow:athena"
+
+heartbeat:
+    enabled: true
+    interval: 4h
+    active_hours: "08:00-23:00"
+    checklist: ~/Documents/Obsidian/Claude/HEARTBEAT.md
+    notify_room: "#hades:athena"
