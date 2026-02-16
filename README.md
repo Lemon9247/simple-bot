@@ -14,11 +14,11 @@ One agent. One account. One self.
 │  │ Matrix   │  │ Discord  │  listeners │
 │  │ listener │  │ listener │            │
 │  └────┬─────┘  └────┬─────┘            │
-│       └──────┬───────┘                 │
+│       └──────┬──────┘                  │
 │       ┌──────▼──────┐                  │
 │       │   bridge    │  track origin    │
 │       └──────┬──────┘                  │
-│              │ stdin/stdout (JSON-RPC)  │
+│              │ stdin/stdout (JSON-RPC) │
 │       ┌──────▼──────┐                  │
 │       │  pi (one)   │                  │
 │       └─────────────┘                  │
