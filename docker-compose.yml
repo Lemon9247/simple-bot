@@ -4,6 +4,7 @@ services:
         restart: unless-stopped
         volumes:
             - ./config.yaml:/config/config.yaml:ro
-            - ${PI_CWD:-.}:/pi-cwd
+            - ${PI_CWD}:/pi-cwd              # pi's working directory
+            - ${PI_HOME:-~/.pi}:/home/node/.pi  # pi agent config, auth, extensions
         env_file:
             - .env
