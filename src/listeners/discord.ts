@@ -1,16 +1,15 @@
 import { Client, GatewayIntentBits, Events } from "discord.js";
 import type { Listener, IncomingMessage, MessageOrigin } from "../types.js";
+import * as logger from "../logger.js";
 
 export class DiscordListener implements Listener {
     readonly name = "discord";
     private client: Client;
     private token: string;
-    private allowedUsers: string[];
     private messageHandler?: (msg: IncomingMessage) => void;
 
-    constructor(token: string, allowedUsers: string[] = []) {
+    constructor(token: string) {
         this.token = token;
-        this.allowedUsers = allowedUsers;
         this.client = new Client({
             intents: [
                 GatewayIntentBits.Guilds,
@@ -26,10 +25,10 @@ export class DiscordListener implements Listener {
             if (!this.messageHandler) return;
             if (message.author.bot) return;
 
-            // Filter by allowed users if configured
-            if (this.allowedUsers.length > 0 && !this.allowedUsers.includes(message.author.username)) {
-                return;
-            }
+            logger.info("Discord message received", {
+                sender: message.author.username,
+                channel: message.channelId,
+            });
 
             const msg: IncomingMessage = {
                 platform: "discord",
@@ -41,7 +40,21 @@ export class DiscordListener implements Listener {
             this.messageHandler(msg);
         });
 
-        await this.client.login(this.token);
+        this.client.on(Events.Error, (err) => {
+            logger.error("Discord client error", { error: String(err) });
+        });
+
+        // Wait for ready, not just login
+        await new Promise<void>((resolve, reject) => {
+            this.client.once(Events.ClientReady, (c) => {
+                logger.info("Discord connected", {
+                    user: c.user.tag,
+                    guilds: c.guilds.cache.map((g) => g.name),
+                });
+                resolve();
+            });
+            this.client.login(this.token).catch(reject);
+        });
     }
 
     async disconnect(): Promise<void> {

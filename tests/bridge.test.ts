@@ -40,7 +40,7 @@ describe("Bridge", () => {
                     JSON.stringify({ id: cmd.id, type: "response", command: cmd.type, success: true }) + "\n"
                 );
 
-                if (cmd.type === "follow_up") {
+                if (cmd.type === "prompt") {
                     const text = responses[callCount++] ?? "unexpected";
                     stdout.write(JSON.stringify({ type: "agent_start" }) + "\n");
                     stdout.write(
@@ -83,7 +83,7 @@ describe("Bridge", () => {
                     JSON.stringify({ id: cmd.id, type: "response", command: cmd.type, success: true }) + "\n"
                 );
 
-                if (cmd.type === "follow_up") {
+                if (cmd.type === "prompt") {
                     stdout.write(JSON.stringify({ type: "agent_start" }) + "\n");
                     stdout.write(
                         JSON.stringify({

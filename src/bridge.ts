@@ -59,7 +59,10 @@ export class Bridge extends EventEmitter {
         return new Promise((resolve, reject) => {
             const entry: Pending = { resolve, reject };
             this.responseQueue.push(entry);
-            this.rpc("follow_up", { message: text }).catch((err) => {
+            // Use prompt with followUp streaming behavior:
+            // - if pi is idle: starts processing immediately
+            // - if pi is busy: queues for after current turn
+            this.rpc("prompt", { message: text, streamingBehavior: "followUp" }).catch((err) => {
                 const idx = this.responseQueue.indexOf(entry);
                 if (idx >= 0) this.responseQueue.splice(idx, 1);
                 reject(err);
@@ -91,6 +94,7 @@ export class Bridge extends EventEmitter {
     private rpc(type: string, params: Record<string, unknown> = {}): Promise<any> {
         const id = randomUUID();
         const line = JSON.stringify({ id, type, ...params });
+        logger.info("Bridge RPC send", { type, id: id.slice(0, 8) });
         return new Promise((resolve, reject) => {
             this.rpcPending.set(id, { resolve, reject });
             this.proc!.stdin!.write(line + "\n");
@@ -112,6 +116,8 @@ export class Bridge extends EventEmitter {
     }
 
     private onEvent(event: any): void {
+        logger.info("Bridge event", { type: event.type, sub: event.assistantMessageEvent?.type });
+
         // RPC response to a command we sent
         if (event.type === "response" && event.id && this.rpcPending.has(event.id)) {
             const pending = this.rpcPending.get(event.id)!;

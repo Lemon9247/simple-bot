@@ -117,7 +117,7 @@ describe("Daemon", () => {
 
         await new Promise((r) => setTimeout(r, 50));
 
-        const followUp = commands.find((c) => c.type === "follow_up");
+        const followUp = commands.find((c) => c.type === "prompt");
         expect(followUp).toBeDefined();
         expect(followUp.message).toBe("[matrix #general] @willow:athena: what's up?");
     });

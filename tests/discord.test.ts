@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock discord.js before importing
 const mockOn = vi.fn();
+const mockOnce = vi.fn();
 const mockLogin = vi.fn().mockResolvedValue(undefined);
 const mockDestroy = vi.fn().mockResolvedValue(undefined);
 const mockFetch = vi.fn();
@@ -10,6 +11,7 @@ vi.mock("discord.js", () => ({
     Client: class MockClient {
         constructor() {
             (this as any).on = mockOn;
+            (this as any).once = mockOnce;
             (this as any).login = mockLogin;
             (this as any).destroy = mockDestroy;
             (this as any).channels = { fetch: mockFetch };
@@ -23,18 +25,34 @@ vi.mock("discord.js", () => ({
     },
     Events: {
         MessageCreate: "messageCreate",
+        ClientReady: "ready",
+        Error: "error",
     },
+}));
+
+vi.mock("../src/logger.js", () => ({
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
 }));
 
 import { DiscordListener } from "../src/listeners/discord.js";
 import type { IncomingMessage } from "../src/types.js";
+
+function connectListener(listener: DiscordListener): Promise<void> {
+    // Trigger the ready callback when connect is called
+    mockOnce.mockImplementation((_event: string, cb: Function) => {
+        cb({ user: { tag: "test#0" }, guilds: { cache: { map: () => [] } } });
+    });
+    return listener.connect();
+}
 
 describe("DiscordListener", () => {
     let listener: DiscordListener;
 
     beforeEach(() => {
         vi.clearAllMocks();
-        listener = new DiscordListener("fake-token", ["willow"]);
+        listener = new DiscordListener("fake-token");
     });
 
     it("has name 'discord'", () => {
@@ -42,7 +60,7 @@ describe("DiscordListener", () => {
     });
 
     it("logs in on connect", async () => {
-        await listener.connect();
+        await connectListener(listener);
         expect(mockLogin).toHaveBeenCalledWith("fake-token");
     });
 
@@ -52,14 +70,14 @@ describe("DiscordListener", () => {
     });
 
     it("registers messageCreate handler on connect", async () => {
-        await listener.connect();
+        await connectListener(listener);
         expect(mockOn).toHaveBeenCalledWith("messageCreate", expect.any(Function));
     });
 
     it("invokes onMessage handler with correct fields", async () => {
         const received: IncomingMessage[] = [];
         listener.onMessage((msg) => received.push(msg));
-        await listener.connect();
+        await connectListener(listener);
 
         const handler = mockOn.mock.calls.find((c) => c[0] === "messageCreate")?.[1];
         handler({
@@ -80,7 +98,7 @@ describe("DiscordListener", () => {
     it("ignores bot messages", async () => {
         const received: IncomingMessage[] = [];
         listener.onMessage((msg) => received.push(msg));
-        await listener.connect();
+        await connectListener(listener);
 
         const handler = mockOn.mock.calls.find((c) => c[0] === "messageCreate")?.[1];
         handler({
@@ -92,32 +110,16 @@ describe("DiscordListener", () => {
         expect(received).toHaveLength(0);
     });
 
-    it("filters by allowed users", async () => {
+    it("passes all non-bot messages through (daemon handles security)", async () => {
         const received: IncomingMessage[] = [];
         listener.onMessage((msg) => received.push(msg));
-        await listener.connect();
+        await connectListener(listener);
 
         const handler = mockOn.mock.calls.find((c) => c[0] === "messageCreate")?.[1];
         handler({
             author: { bot: false, username: "stranger" },
             channelId: "12345",
             content: "hey",
-        });
-
-        expect(received).toHaveLength(0);
-    });
-
-    it("allows all users when allowedUsers is empty", async () => {
-        const openListener = new DiscordListener("fake-token");
-        const received: IncomingMessage[] = [];
-        openListener.onMessage((msg) => received.push(msg));
-        await openListener.connect();
-
-        const handler = mockOn.mock.calls.find((c) => c[0] === "messageCreate")?.[1];
-        handler({
-            author: { bot: false, username: "anyone" },
-            channelId: "12345",
-            content: "hi",
         });
 
         expect(received).toHaveLength(1);
