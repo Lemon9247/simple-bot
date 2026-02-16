@@ -1,20 +1,23 @@
 import { Bridge } from "./bridge.js";
 import type { Config, Listener, IncomingMessage, MessageOrigin } from "./types.js";
+import type { Heartbeat } from "./heartbeat.js";
 import * as logger from "./logger.js";
 
 export class Daemon {
     private config: Config;
     private bridge: Bridge;
     private listeners: Listener[] = [];
+    private heartbeat?: Heartbeat;
     private stopping = false;
 
-    constructor(config: Config, bridge?: Bridge) {
+    constructor(config: Config, bridge?: Bridge, heartbeat?: Heartbeat) {
         this.config = config;
         this.bridge = bridge ?? new Bridge({
             cwd: config.pi.cwd,
             command: config.pi.command,
             args: config.pi.args,
         });
+        this.heartbeat = heartbeat;
     }
 
     addListener(listener: Listener): void {
@@ -34,11 +37,19 @@ export class Daemon {
             await listener.connect();
         }
 
+        if (this.heartbeat) {
+            this.heartbeat.on("response", (response: string) => this.handleHeartbeatResponse(response));
+            this.heartbeat.start();
+        }
+
         logger.info("simple-bot started", { listeners: this.listeners.length });
     }
 
     async stop(): Promise<void> {
         this.stopping = true;
+        if (this.heartbeat) {
+            this.heartbeat.stop();
+        }
         for (const listener of this.listeners) {
             await listener.disconnect().catch(() => {});
         }
@@ -69,5 +80,39 @@ export class Daemon {
         } catch (err) {
             logger.error("Failed to process message", { error: String(err) });
         }
+    }
+
+    private async handleHeartbeatResponse(response: string): Promise<void> {
+        if (!this.config.heartbeat) return;
+
+        const notifyRoom = this.config.heartbeat.notify_room;
+        const [platform, channel] = this.parseRoomId(notifyRoom);
+
+        if (!platform || !channel) {
+            logger.error("Invalid notify_room format", { notifyRoom });
+            return;
+        }
+
+        const origin: MessageOrigin = { platform, channel };
+        const listener = this.listeners.find((l) => l.name === platform);
+
+        if (listener) {
+            try {
+                await listener.send(origin, response);
+            } catch (err) {
+                logger.error("Failed to send heartbeat response", { error: String(err) });
+            }
+        } else {
+            logger.error("No listener found for platform", { platform });
+        }
+    }
+
+    private parseRoomId(roomId: string): [string | null, string | null] {
+        if (roomId.startsWith("#") && roomId.includes(":")) {
+            return ["matrix", roomId];
+        } else if (/^\d+$/.test(roomId)) {
+            return ["discord", roomId];
+        }
+        return [null, null];
     }
 }
