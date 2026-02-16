@@ -13,7 +13,8 @@
         "test:watch": "vitest"
     },
     "dependencies": {
-        "js-yaml": "^4.1.1"
+        "js-yaml": "^4.1.1",
+        "matrix-bot-sdk": "^0.8.0"
     },
     "devDependencies": {
         "@types/js-yaml": "^4.0.9",
