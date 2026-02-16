@@ -1,8 +1,12 @@
-# simple-bot
+# simple-bot: homebrew always-on agent
 
-A thin daemon that bridges Matrix (and other platforms) to a single pi instance via RPC.
+A thin daemon that bridges Matrix, Discord etc to a single pi instance via RPC.
 
 One agent. One account. One self.
+
+## Why did you build this
+
+Building your own agents is fun
 
 ## Architecture
 
