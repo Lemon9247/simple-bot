@@ -118,6 +118,70 @@ describe("Daemon", () => {
         expect(listener.sent[2].text).toBe("All tests pass!");
     });
 
+    it("sends intermediate text as separate messages before tool calls", async () => {
+        // Custom mock: text → tool → more text
+        const { proc, stdin, stdout } = createMockProcess();
+        stdin.removeAllListeners("data");
+        stdin.on("data", (chunk: Buffer) => {
+            const lines = chunk.toString().split("\n").filter(Boolean);
+            for (const line of lines) {
+                let cmd: any;
+                try { cmd = JSON.parse(line); } catch { continue; }
+
+                stdout.write(
+                    JSON.stringify({ id: cmd.id, type: "response", command: cmd.type, success: true }) + "\n"
+                );
+
+                if (cmd.type === "prompt") {
+                    stdout.write(JSON.stringify({ type: "agent_start" }) + "\n");
+                    stdout.write(JSON.stringify({
+                        type: "message_update",
+                        assistantMessageEvent: { type: "text_delta", delta: "Let me look at that." },
+                    }) + "\n");
+                    stdout.write(JSON.stringify({
+                        type: "tool_execution_start",
+                        toolCallId: "tc-1",
+                        toolName: "read",
+                        args: { path: "config.ts" },
+                    }) + "\n");
+                    stdout.write(JSON.stringify({
+                        type: "tool_execution_end",
+                        toolCallId: "tc-1",
+                        toolName: "read",
+                        isError: false,
+                    }) + "\n");
+                    stdout.write(JSON.stringify({
+                        type: "message_update",
+                        assistantMessageEvent: { type: "text_delta", delta: "Found the issue!" },
+                    }) + "\n");
+                    stdout.write(JSON.stringify({ type: "agent_end" }) + "\n");
+                }
+            }
+        });
+
+        const bridge = new Bridge({ cwd: "/tmp", spawnFn: () => proc as any });
+        daemon = new Daemon(baseConfig, bridge);
+
+        const listener = new MockListener("matrix");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        listener.receive({
+            platform: "matrix",
+            channel: "#general",
+            sender: "@willow:athena",
+            text: "check the config",
+        });
+
+        await new Promise((r) => setTimeout(r, 50));
+
+        // Intermediate text, tool summary, final text
+        expect(listener.sent).toHaveLength(3);
+        expect(listener.sent[0].text).toBe("Let me look at that.");
+        expect(listener.sent[1].text).toBe("📖 Reading `config.ts`");
+        expect(listener.sent[2].text).toBe("Found the issue!");
+    });
+
     it("formats messages with platform context", async () => {
         const { spawnFn, stdin } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });

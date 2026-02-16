@@ -119,6 +119,12 @@ export class Daemon {
                         logger.error("Failed to send tool update", { error: String(err) });
                     });
                 },
+                onText: (text) => {
+                    if (!listener) return;
+                    listener.send(origin, text).catch((err) => {
+                        logger.error("Failed to send intermediate text", { error: String(err) });
+                    });
+                },
             });
 
             if (!response) return;

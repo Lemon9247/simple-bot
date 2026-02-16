@@ -13,12 +13,14 @@ export interface BridgeOptions {
 
 export interface SendOptions {
     onToolStart?: (info: ToolCallInfo) => void;
+    onText?: (text: string) => void;
 }
 
 interface Pending {
     resolve: (data: any) => void;
     reject: (err: Error) => void;
     onToolStart?: (info: ToolCallInfo) => void;
+    onText?: (text: string) => void;
 }
 
 export class Bridge extends EventEmitter {
@@ -63,7 +65,11 @@ export class Bridge extends EventEmitter {
             return Promise.reject(new Error("Pi process not running"));
         }
         return new Promise((resolve, reject) => {
-            const entry: Pending = { resolve, reject, onToolStart: options?.onToolStart };
+            const entry: Pending = {
+                resolve, reject,
+                onToolStart: options?.onToolStart,
+                onText: options?.onText,
+            };
             this.responseQueue.push(entry);
             // Use prompt with followUp streaming behavior:
             // - if pi is idle: starts processing immediately
@@ -132,14 +138,23 @@ export class Bridge extends EventEmitter {
             return;
         }
 
-        // Tool execution started — notify current message handler
+        // Tool execution started — flush accumulated text, then notify
         if (event.type === "tool_execution_start") {
             const current = this.responseQueue[0];
-            if (current?.onToolStart) {
-                current.onToolStart({
-                    toolName: event.toolName,
-                    args: event.args ?? {},
-                });
+            if (current) {
+                // Flush intermediate text before tool call
+                const text = this.responseText.trim();
+                if (text && current.onText) {
+                    current.onText(text);
+                }
+                this.responseText = "";
+
+                if (current.onToolStart) {
+                    current.onToolStart({
+                        toolName: event.toolName,
+                        args: event.args ?? {},
+                    });
+                }
             }
         }
 

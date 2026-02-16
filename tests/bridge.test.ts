@@ -164,6 +164,66 @@ describe("Bridge", () => {
         expect(response).toBe("Done!");
     });
 
+    it("flushes intermediate text before tool calls via onText", async () => {
+        // Simulate: text → tool → more text (final)
+        const { proc, stdin, stdout } = createMockProcess();
+        stdin.removeAllListeners("data");
+        stdin.on("data", (chunk: Buffer) => {
+            const lines = chunk.toString().split("\n").filter(Boolean);
+            for (const line of lines) {
+                let cmd: any;
+                try { cmd = JSON.parse(line); } catch { continue; }
+
+                stdout.write(
+                    JSON.stringify({ id: cmd.id, type: "response", command: cmd.type, success: true }) + "\n"
+                );
+
+                if (cmd.type === "prompt") {
+                    stdout.write(JSON.stringify({ type: "agent_start" }) + "\n");
+                    // Intermediate text
+                    stdout.write(JSON.stringify({
+                        type: "message_update",
+                        assistantMessageEvent: { type: "text_delta", delta: "Let me check..." },
+                    }) + "\n");
+                    // Tool fires — should flush text
+                    stdout.write(JSON.stringify({
+                        type: "tool_execution_start",
+                        toolCallId: "tc-1",
+                        toolName: "read",
+                        args: { path: "file.ts" },
+                    }) + "\n");
+                    stdout.write(JSON.stringify({
+                        type: "tool_execution_end",
+                        toolCallId: "tc-1",
+                        toolName: "read",
+                        isError: false,
+                    }) + "\n");
+                    // Final text
+                    stdout.write(JSON.stringify({
+                        type: "message_update",
+                        assistantMessageEvent: { type: "text_delta", delta: "All done!" },
+                    }) + "\n");
+                    stdout.write(JSON.stringify({ type: "agent_end" }) + "\n");
+                }
+            }
+        });
+
+        bridge = new Bridge({ cwd: "/tmp", spawnFn: () => proc as any });
+        bridge.start();
+
+        const flushed: string[] = [];
+        const tools: ToolCallInfo[] = [];
+        const response = await bridge.sendMessage("test", {
+            onText: (text) => flushed.push(text),
+            onToolStart: (info) => tools.push(info),
+        });
+
+        expect(flushed).toEqual(["Let me check..."]);
+        expect(tools).toHaveLength(1);
+        expect(tools[0].toolName).toBe("read");
+        expect(response).toBe("All done!");
+    });
+
     it("emits events from pi", async () => {
         const { spawnFn } = createMockProcess("test");
         bridge = new Bridge({ cwd: "/tmp", spawnFn });
