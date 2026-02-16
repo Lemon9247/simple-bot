@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Events } from "discord.js";
+import { Client, Intents } from "discord.js";
 import type { Listener, IncomingMessage, MessageOrigin } from "../types.js";
 import * as logger from "../logger.js";
 
@@ -12,16 +12,16 @@ export class DiscordListener implements Listener {
         this.token = token;
         this.client = new Client({
             intents: [
-                GatewayIntentBits.Guilds,
-                GatewayIntentBits.GuildMessages,
-                GatewayIntentBits.MessageContent,
-                GatewayIntentBits.DirectMessages,
+                Intents.FLAGS.GUILDS,
+                Intents.FLAGS.GUILD_MESSAGES,
+                Intents.FLAGS.MESSAGE_CONTENT,
+                Intents.FLAGS.DIRECT_MESSAGES,
             ],
         });
     }
 
     async connect(): Promise<void> {
-        this.client.on(Events.MessageCreate, (message) => {
+        this.client.on("messageCreate", (message) => {
             if (!this.messageHandler) return;
             if (message.author.bot) return;
 
@@ -40,16 +40,16 @@ export class DiscordListener implements Listener {
             this.messageHandler(msg);
         });
 
-        this.client.on(Events.Error, (err) => {
+        this.client.on("error", (err) => {
             logger.error("Discord client error", { error: String(err) });
         });
 
         // Wait for ready, not just login
         await new Promise<void>((resolve, reject) => {
-            this.client.once(Events.ClientReady, (c) => {
+            this.client.once("ready", (c) => {
                 logger.info("Discord connected", {
                     user: c.user.tag,
-                    guilds: c.guilds.cache.map((g) => g.name),
+                    guilds: c.guilds.cache.map((g: any) => g.name),
                 });
                 resolve();
             });
@@ -67,7 +67,7 @@ export class DiscordListener implements Listener {
 
     async send(origin: MessageOrigin, text: string): Promise<void> {
         const channel = await this.client.channels.fetch(origin.channel);
-        if (channel?.isTextBased() && "send" in channel) {
+        if (channel?.isText() && "send" in channel) {
             await (channel as any).send(text);
         }
     }

@@ -1,11 +1,33 @@
 import { Bridge } from "./bridge.js";
-import type { Config, Listener, IncomingMessage, MessageOrigin } from "./types.js";
+import type { Config, Listener, IncomingMessage, MessageOrigin, ToolCallInfo } from "./types.js";
 import type { Heartbeat } from "./heartbeat.js";
 import * as logger from "./logger.js";
 
 const MAX_MESSAGE_LENGTH = 4000;
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX_PER_WINDOW = 10;
+
+function formatToolCall(info: ToolCallInfo): string {
+    const { toolName, args } = info;
+    switch (toolName) {
+        case "read":
+            return `📖 Reading \`${args?.path ?? "file"}\``;
+        case "bash": {
+            const cmd = String(args?.command ?? "");
+            const firstLine = cmd.split("\n")[0];
+            const display = firstLine.length > 80
+                ? firstLine.slice(0, 80) + "…"
+                : firstLine;
+            return `⚡ \`${display}\``;
+        }
+        case "edit":
+            return `✏️ Editing \`${args?.path ?? "file"}\``;
+        case "write":
+            return `📝 Writing \`${args?.path ?? "file"}\``;
+        default:
+            return `🔧 ${toolName}`;
+    }
+}
 
 export class Daemon {
     private config: Config;
@@ -82,17 +104,25 @@ export class Daemon {
         }
 
         const formatted = `[${msg.platform} ${msg.channel}] ${msg.sender}: ${msg.text}`;
+        const origin: MessageOrigin = {
+            platform: msg.platform,
+            channel: msg.channel,
+        };
+        const listener = this.listeners.find((l) => l.name === msg.platform);
 
         try {
-            const response = await this.bridge.sendMessage(formatted);
+            const response = await this.bridge.sendMessage(formatted, {
+                onToolStart: (info) => {
+                    if (!listener) return;
+                    const summary = formatToolCall(info);
+                    listener.send(origin, summary).catch((err) => {
+                        logger.error("Failed to send tool update", { error: String(err) });
+                    });
+                },
+            });
+
             if (!response) return;
 
-            const origin: MessageOrigin = {
-                platform: msg.platform,
-                channel: msg.channel,
-            };
-
-            const listener = this.listeners.find((l) => l.name === msg.platform);
             if (listener) {
                 await listener.send(origin, response);
             }

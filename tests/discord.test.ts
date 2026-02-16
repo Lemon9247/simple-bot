@@ -17,16 +17,13 @@ vi.mock("discord.js", () => ({
             (this as any).channels = { fetch: mockFetch };
         }
     },
-    GatewayIntentBits: {
-        Guilds: 1,
-        GuildMessages: 2,
-        MessageContent: 4,
-        DirectMessages: 8,
-    },
-    Events: {
-        MessageCreate: "messageCreate",
-        ClientReady: "ready",
-        Error: "error",
+    Intents: {
+        FLAGS: {
+            GUILDS: 1,
+            GUILD_MESSAGES: 2,
+            MESSAGE_CONTENT: 4,
+            DIRECT_MESSAGES: 8,
+        },
     },
 }));
 
@@ -128,7 +125,7 @@ describe("DiscordListener", () => {
     it("sends message to correct channel", async () => {
         const mockSend = vi.fn();
         mockFetch.mockResolvedValue({
-            isTextBased: () => true,
+            isText: () => true,
             send: mockSend,
         });
 

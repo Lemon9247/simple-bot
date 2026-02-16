@@ -89,6 +89,35 @@ describe("Daemon", () => {
         expect(discord.sent).toHaveLength(0);
     });
 
+    it("forwards tool call summaries to the listener", async () => {
+        const toolCalls = [
+            { toolName: "read", args: { path: "src/main.ts" } },
+            { toolName: "bash", args: { command: "npm test" } },
+        ];
+        const { spawnFn } = createMockProcess("All tests pass!", toolCalls);
+        const bridge = new Bridge({ cwd: "/tmp", spawnFn });
+        daemon = new Daemon(baseConfig, bridge);
+
+        const listener = new MockListener("matrix");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        listener.receive({
+            platform: "matrix",
+            channel: "#general",
+            sender: "@willow:athena",
+            text: "run the tests",
+        });
+
+        await new Promise((r) => setTimeout(r, 50));
+
+        // Tool summaries + final response
+        expect(listener.sent).toHaveLength(3);
+        expect(listener.sent[0].text).toBe("📖 Reading `src/main.ts`");
+        expect(listener.sent[1].text).toBe("⚡ `npm test`");
+        expect(listener.sent[2].text).toBe("All tests pass!");
+    });
+
     it("formats messages with platform context", async () => {
         const { spawnFn, stdin } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });
