@@ -182,6 +182,81 @@ describe("Daemon", () => {
         expect(listener.sent[2].text).toBe("Found the issue!");
     });
 
+    it("steers instead of queuing when bridge is busy", async () => {
+        // Slow mock — holds the first message in flight
+        const { proc, stdin, stdout } = createMockProcess();
+        stdin.removeAllListeners("data");
+
+        const commands: any[] = [];
+        let resolveFirst: (() => void) | null = null;
+
+        stdin.on("data", (chunk: Buffer) => {
+            const lines = chunk.toString().split("\n").filter(Boolean);
+            for (const line of lines) {
+                let cmd: any;
+                try { cmd = JSON.parse(line); } catch { continue; }
+                commands.push(cmd);
+
+                // Acknowledge all RPCs
+                stdout.write(
+                    JSON.stringify({ id: cmd.id, type: "response", command: cmd.type, success: true }) + "\n"
+                );
+
+                if (cmd.type === "prompt") {
+                    stdout.write(JSON.stringify({ type: "agent_start" }) + "\n");
+                    // Hold — don't send agent_end until we say so
+                    resolveFirst = () => {
+                        stdout.write(JSON.stringify({
+                            type: "message_update",
+                            assistantMessageEvent: { type: "text_delta", delta: "response" },
+                        }) + "\n");
+                        stdout.write(JSON.stringify({ type: "agent_end" }) + "\n");
+                    };
+                }
+            }
+        });
+
+        const bridge = new Bridge({ cwd: "/tmp", spawnFn: () => proc as any });
+        daemon = new Daemon(baseConfig, bridge);
+
+        const listener = new MockListener("matrix");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        // First message — starts processing
+        listener.receive({
+            platform: "matrix",
+            channel: "#general",
+            sender: "@willow:athena",
+            text: "do the thing",
+        });
+
+        await new Promise((r) => setTimeout(r, 20));
+
+        // Second message while first is in flight — should steer
+        listener.receive({
+            platform: "matrix",
+            channel: "#general",
+            sender: "@willow:athena",
+            text: "actually do this instead",
+        });
+
+        await new Promise((r) => setTimeout(r, 20));
+
+        // Check commands sent to pi
+        const steerCmd = commands.find((c) => c.type === "steer");
+        expect(steerCmd).toBeDefined();
+        expect(steerCmd.message).toContain("actually do this instead");
+
+        // No second prompt should have been sent
+        const prompts = commands.filter((c) => c.type === "prompt");
+        expect(prompts).toHaveLength(1);
+
+        // Resolve the first message
+        resolveFirst!();
+        await new Promise((r) => setTimeout(r, 20));
+    });
+
     it("formats messages with platform context", async () => {
         const { spawnFn, stdin } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });

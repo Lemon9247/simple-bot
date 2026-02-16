@@ -104,6 +104,14 @@ export class Daemon {
         }
 
         const formatted = `[${msg.platform} ${msg.channel}] ${msg.sender}: ${msg.text}`;
+
+        // If the agent is mid-chain, steer instead of queuing a new prompt
+        if (this.bridge.busy) {
+            logger.info("Steering active agent", { sender: msg.sender });
+            this.bridge.steer(formatted);
+            return;
+        }
+
         const origin: MessageOrigin = {
             platform: msg.platform,
             channel: msg.channel,

@@ -103,6 +103,17 @@ export class Bridge extends EventEmitter {
         return this.proc !== null && this.proc.exitCode === null;
     }
 
+    get busy(): boolean {
+        return this.responseQueue.length > 0;
+    }
+
+    steer(text: string): void {
+        if (!this.proc?.stdin?.writable) return;
+        this.rpc("steer", { message: text }).catch((err) => {
+            logger.error("Failed to steer", { error: String(err) });
+        });
+    }
+
     private rpc(type: string, params: Record<string, unknown> = {}): Promise<any> {
         const id = randomUUID();
         const line = JSON.stringify({ id, type, ...params });

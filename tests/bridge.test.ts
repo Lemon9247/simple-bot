@@ -224,6 +224,75 @@ describe("Bridge", () => {
         expect(response).toBe("All done!");
     });
 
+    it("reports busy when messages are in flight", async () => {
+        const { proc, stdin, stdout } = createMockProcess();
+        // Replace handler: ack RPCs but hold agent_end
+        let finishAgent: (() => void) | null = null;
+        stdin.removeAllListeners("data");
+        stdin.on("data", (chunk: Buffer) => {
+            const lines = chunk.toString().split("\n").filter(Boolean);
+            for (const line of lines) {
+                let cmd: any;
+                try { cmd = JSON.parse(line); } catch { continue; }
+                stdout.write(
+                    JSON.stringify({ id: cmd.id, type: "response", command: cmd.type, success: true }) + "\n"
+                );
+                if (cmd.type === "prompt") {
+                    stdout.write(JSON.stringify({ type: "agent_start" }) + "\n");
+                    finishAgent = () => {
+                        stdout.write(JSON.stringify({
+                            type: "message_update",
+                            assistantMessageEvent: { type: "text_delta", delta: "done" },
+                        }) + "\n");
+                        stdout.write(JSON.stringify({ type: "agent_end" }) + "\n");
+                    };
+                }
+            }
+        });
+
+        bridge = new Bridge({ cwd: "/tmp", spawnFn: () => proc as any });
+        bridge.start();
+
+        expect(bridge.busy).toBe(false);
+
+        const promise = bridge.sendMessage("test");
+        await new Promise((r) => setTimeout(r, 20));
+        expect(bridge.busy).toBe(true);
+
+        finishAgent!();
+        await promise;
+        expect(bridge.busy).toBe(false);
+    });
+
+    it("sends steer command when called", async () => {
+        const { proc, stdin, stdout, spawnFn } = createMockProcess("ok");
+        const commands: any[] = [];
+
+        // Intercept commands
+        const origHandler = stdin.listeners("data")[0] as any;
+        stdin.removeAllListeners("data");
+        stdin.on("data", (chunk: Buffer) => {
+            const lines = chunk.toString().split("\n").filter(Boolean);
+            for (const line of lines) {
+                try { commands.push(JSON.parse(line)); } catch {}
+            }
+            // Forward to original handler for response
+            origHandler(chunk);
+        });
+
+        bridge = new Bridge({ cwd: "/tmp", spawnFn });
+        bridge.start();
+
+        bridge.steer("change course");
+
+        // Wait for async processing
+        await new Promise((r) => setTimeout(r, 20));
+
+        const steerCmd = commands.find((c) => c.type === "steer");
+        expect(steerCmd).toBeDefined();
+        expect(steerCmd.message).toBe("change course");
+    });
+
     it("emits events from pi", async () => {
         const { spawnFn } = createMockProcess("test");
         bridge = new Bridge({ cwd: "/tmp", spawnFn });
