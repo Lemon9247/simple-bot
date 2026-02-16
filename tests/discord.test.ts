@@ -34,7 +34,7 @@ describe("DiscordListener", () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
-        listener = new DiscordListener("fake-token", ["willow#1234"]);
+        listener = new DiscordListener("fake-token", ["willow"]);
     });
 
     it("has name 'discord'", () => {
@@ -63,7 +63,7 @@ describe("DiscordListener", () => {
 
         const handler = mockOn.mock.calls.find((c) => c[0] === "messageCreate")?.[1];
         handler({
-            author: { bot: false, tag: "willow#1234" },
+            author: { bot: false, username: "willow" },
             channelId: "12345",
             content: "hello hades",
         });
@@ -72,7 +72,7 @@ describe("DiscordListener", () => {
         expect(received[0]).toEqual({
             platform: "discord",
             channel: "12345",
-            sender: "willow#1234",
+            sender: "willow",
             text: "hello hades",
         });
     });
@@ -84,7 +84,7 @@ describe("DiscordListener", () => {
 
         const handler = mockOn.mock.calls.find((c) => c[0] === "messageCreate")?.[1];
         handler({
-            author: { bot: true, tag: "other-bot#0000" },
+            author: { bot: true, username: "otherbot" },
             channelId: "12345",
             content: "beep boop",
         });
@@ -99,7 +99,7 @@ describe("DiscordListener", () => {
 
         const handler = mockOn.mock.calls.find((c) => c[0] === "messageCreate")?.[1];
         handler({
-            author: { bot: false, tag: "stranger#9999" },
+            author: { bot: false, username: "stranger" },
             channelId: "12345",
             content: "hey",
         });
@@ -115,7 +115,7 @@ describe("DiscordListener", () => {
 
         const handler = mockOn.mock.calls.find((c) => c[0] === "messageCreate")?.[1];
         handler({
-            author: { bot: false, tag: "anyone#5555" },
+            author: { bot: false, username: "anyone" },
             channelId: "12345",
             content: "hi",
         });

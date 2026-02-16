@@ -27,14 +27,14 @@ export class DiscordListener implements Listener {
             if (message.author.bot) return;
 
             // Filter by allowed users if configured
-            if (this.allowedUsers.length > 0 && !this.allowedUsers.includes(message.author.tag)) {
+            if (this.allowedUsers.length > 0 && !this.allowedUsers.includes(message.author.username)) {
                 return;
             }
 
             const msg: IncomingMessage = {
                 platform: "discord",
                 channel: message.channelId,
-                sender: message.author.tag,
+                sender: message.author.username,
                 text: message.content,
             };
 

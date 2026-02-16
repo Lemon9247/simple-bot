@@ -1,18 +1,23 @@
 pi:
-    cwd: ~/Documents/Obsidian/Claude
+    cwd: /pi-cwd
 
-matrix:
-    homeserver: https://athena.local
-    user: "@hades:athena"
-    token: "env:MATRIX_TOKEN"
+# Uncomment the platform(s) you want:
+
+# matrix:
+#     homeserver: https://athena.local
+#     user: "@hades:athena"
+#     token: "env:MATRIX_TOKEN"
+
+discord:
+    token: "env:DISCORD_TOKEN"
 
 security:
     allowed_users:
-        - "@willow:athena"
+        - "willowsparks"    # Discord username
 
-heartbeat:
-    enabled: true
-    interval: 4h
-    active_hours: "08:00-23:00"
-    checklist: ~/Documents/Obsidian/Claude/HEARTBEAT.md
-    notify_room: "#hades:athena"
+# heartbeat:
+#     enabled: true
+#     interval: 4h
+#     active_hours: "08:00-23:00"
+#     checklist: /pi-cwd/HEARTBEAT.md
+#     notify_room: "#hades:athena"
