@@ -3,12 +3,17 @@ import type { Config, Listener, IncomingMessage, MessageOrigin } from "./types.j
 import type { Heartbeat } from "./heartbeat.js";
 import * as logger from "./logger.js";
 
+const MAX_MESSAGE_LENGTH = 4000;
+const RATE_WINDOW_MS = 60_000;
+const RATE_MAX_PER_WINDOW = 10;
+
 export class Daemon {
     private config: Config;
     private bridge: Bridge;
     private listeners: Listener[] = [];
     private heartbeat?: Heartbeat;
     private stopping = false;
+    private rateLimits = new Map<string, number[]>();
 
     constructor(config: Config, bridge?: Bridge, heartbeat?: Heartbeat) {
         this.config = config;
@@ -59,6 +64,20 @@ export class Daemon {
     private async handleMessage(msg: IncomingMessage): Promise<void> {
         if (!this.config.security.allowed_users.includes(msg.sender)) {
             logger.info("Ignored message from unauthorized user", { sender: msg.sender });
+            return;
+        }
+
+        if (msg.text.length > MAX_MESSAGE_LENGTH) {
+            logger.warn("Dropped oversized message", {
+                sender: msg.sender,
+                length: msg.text.length,
+                max: MAX_MESSAGE_LENGTH,
+            });
+            return;
+        }
+
+        if (this.isRateLimited(msg.sender)) {
+            logger.warn("Rate limited user", { sender: msg.sender });
             return;
         }
 
@@ -114,5 +133,20 @@ export class Daemon {
             return ["discord", roomId];
         }
         return [null, null];
+    }
+
+    private isRateLimited(sender: string): boolean {
+        const now = Date.now();
+        const timestamps = this.rateLimits.get(sender) ?? [];
+        const recent = timestamps.filter((t) => now - t < RATE_WINDOW_MS);
+
+        if (recent.length >= RATE_MAX_PER_WINDOW) {
+            this.rateLimits.set(sender, recent);
+            return true;
+        }
+
+        recent.push(now);
+        this.rateLimits.set(sender, recent);
+        return false;
     }
 }

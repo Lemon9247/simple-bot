@@ -7,6 +7,7 @@ pi:
 #     homeserver: https://athena.local
 #     user: "@hades:athena"
 #     token: "env:MATRIX_TOKEN"
+#     storage_path: /data/matrix-bot.json
 
 discord:
     token: "env:DISCORD_TOKEN"

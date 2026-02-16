@@ -23,7 +23,12 @@ const daemon = new Daemon(config, bridge, heartbeat);
 if (config.matrix) {
     const { MatrixListener } = await import("./listeners/matrix.js");
     daemon.addListener(
-        new MatrixListener(config.matrix.homeserver, config.matrix.user, config.matrix.token)
+        new MatrixListener(
+            config.matrix.homeserver,
+            config.matrix.user,
+            config.matrix.token,
+            config.matrix.storage_path,
+        )
     );
 }
 

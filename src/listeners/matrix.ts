@@ -1,4 +1,4 @@
-import { MatrixClient, SimpleFsStorageProvider, AutojoinRoomsMixin } from "matrix-bot-sdk";
+import { MatrixClient, SimpleFsStorageProvider } from "matrix-bot-sdk";
 import type { Listener, IncomingMessage, MessageOrigin } from "../types.js";
 
 export class MatrixListener implements Listener {
@@ -7,11 +7,10 @@ export class MatrixListener implements Listener {
     private userId: string;
     private messageHandler?: (msg: IncomingMessage) => void;
 
-    constructor(homeserver: string, user: string, token: string) {
+    constructor(homeserver: string, user: string, token: string, storagePath = "matrix-bot.json") {
         this.userId = user;
-        const storage = new SimpleFsStorageProvider("matrix-bot.json");
+        const storage = new SimpleFsStorageProvider(storagePath);
         this.client = new MatrixClient(homeserver, token, storage);
-        AutojoinRoomsMixin.setupOnClient(this.client);
     }
 
     async connect(): Promise<void> {

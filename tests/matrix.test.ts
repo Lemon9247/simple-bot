@@ -20,14 +20,9 @@ vi.mock("matrix-bot-sdk", () => {
 
     class MockSimpleFsStorageProvider {}
 
-    const AutojoinRoomsMixin = {
-        setupOnClient: vi.fn(),
-    };
-
     return {
         MatrixClient: MockMatrixClient,
         SimpleFsStorageProvider: MockSimpleFsStorageProvider,
-        AutojoinRoomsMixin,
     };
 });
 

@@ -31,6 +31,7 @@ export interface Config {
         homeserver: string;
         user: string;
         token: string;
+        storage_path?: string;
     };
     discord?: {
         token: string;
