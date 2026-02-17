@@ -7,6 +7,9 @@ const MAX_MESSAGE_LENGTH = 4000;
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX_PER_WINDOW = 10;
 
+const SLASH_COMMANDS = ["abort", "compress", "new", "model"] as const;
+type SlashCommand = typeof SLASH_COMMANDS[number];
+
 function formatToolCall(info: ToolCallInfo): string {
     const { toolName, args } = info;
     switch (toolName) {
@@ -83,6 +86,86 @@ export class Daemon {
         await this.bridge.stop();
     }
 
+    private parseSlashCommand(text: string): { command: SlashCommand; args: string } | null {
+        if (!text.startsWith("/")) return null;
+        const [rawCommand, ...rest] = text.slice(1).trim().split(/\s+/);
+        const command = rawCommand?.toLowerCase() as SlashCommand;
+        if (!SLASH_COMMANDS.includes(command)) return null;
+        return { command, args: rest.join(" ") };
+    }
+
+    private async handleSlashCommand(
+        command: SlashCommand,
+        args: string,
+        origin: MessageOrigin,
+        listener: Listener | undefined,
+    ): Promise<void> {
+        const reply = async (text: string) => {
+            if (listener) await listener.send(origin, text).catch(() => {});
+        };
+
+        try {
+            switch (command) {
+                case "abort": {
+                    await this.bridge.command("abort");
+                    await reply("⏹️ Aborted.");
+                    break;
+                }
+
+                case "compress": {
+                    await reply("🗜️ Compressing context...");
+                    const result = await this.bridge.command("compact", args ? { customInstructions: args } : {});
+                    const before = result?.tokensBefore ?? "?";
+                    await reply(`✅ Compressed. Tokens before: ${before}`);
+                    break;
+                }
+
+                case "new": {
+                    await this.bridge.command("new_session");
+                    await reply("🆕 Started a new session.");
+                    break;
+                }
+
+                case "model": {
+                    if (!args) {
+                        // List available models
+                        const result = await this.bridge.command("get_available_models");
+                        const models: any[] = result?.models ?? [];
+                        if (models.length === 0) {
+                            await reply("No models available.");
+                        } else {
+                            const list = models
+                                .map((m: any) => `• \`${m.provider}/${m.id}\` — ${m.name}`)
+                                .join("\n");
+                            await reply(`**Available models:**\n${list}\n\nUse \`/model <name>\` to switch.`);
+                        }
+                    } else {
+                        // Find and switch to matching model
+                        const result = await this.bridge.command("get_available_models");
+                        const models: any[] = result?.models ?? [];
+                        const query = args.toLowerCase();
+                        const match = models.find(
+                            (m: any) =>
+                                m.id.toLowerCase().includes(query) ||
+                                m.name.toLowerCase().includes(query) ||
+                                `${m.provider}/${m.id}`.toLowerCase().includes(query),
+                        );
+                        if (!match) {
+                            await reply(`❌ No model matching \`${args}\`. Use \`/model\` to list available models.`);
+                        } else {
+                            await this.bridge.command("set_model", { provider: match.provider, modelId: match.id });
+                            await reply(`✅ Switched to **${match.name}** (\`${match.provider}/${match.id}\`).`);
+                        }
+                    }
+                    break;
+                }
+            }
+        } catch (err) {
+            logger.error("Slash command failed", { command, error: String(err) });
+            await reply(`❌ Command failed: ${String(err)}`);
+        }
+    }
+
     private async handleMessage(msg: IncomingMessage): Promise<void> {
         if (!this.config.security.allowed_users.includes(msg.sender)) {
             logger.info("Ignored message from unauthorized user", { sender: msg.sender });
@@ -103,6 +186,20 @@ export class Daemon {
             return;
         }
 
+        const origin: MessageOrigin = {
+            platform: msg.platform,
+            channel: msg.channel,
+        };
+        const listener = this.listeners.find((l) => l.name === msg.platform);
+
+        // Handle slash commands before passing to the agent
+        const slash = this.parseSlashCommand(msg.text);
+        if (slash) {
+            logger.info("Handling slash command", { command: slash.command, sender: msg.sender });
+            await this.handleSlashCommand(slash.command, slash.args, origin, listener);
+            return;
+        }
+
         const formatted = `[${msg.platform} ${msg.channel}] ${msg.sender}: ${msg.text}`;
 
         // If the agent is mid-chain, steer instead of queuing a new prompt
@@ -111,12 +208,6 @@ export class Daemon {
             this.bridge.steer(formatted);
             return;
         }
-
-        const origin: MessageOrigin = {
-            platform: msg.platform,
-            channel: msg.channel,
-        };
-        const listener = this.listeners.find((l) => l.name === msg.platform);
 
         try {
             const response = await this.bridge.sendMessage(formatted, {

@@ -257,6 +257,169 @@ describe("Daemon", () => {
         await new Promise((r) => setTimeout(r, 20));
     });
 
+    it("handles /abort slash command", async () => {
+        const { spawnFn } = createMockProcess("ok");
+        const bridge = new Bridge({ cwd: "/tmp", spawnFn });
+        daemon = new Daemon(baseConfig, bridge);
+
+        const listener = new MockListener("discord");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        listener.receive({
+            platform: "discord",
+            channel: "123",
+            sender: "@willow:athena",
+            text: "/abort",
+        });
+
+        await new Promise((r) => setTimeout(r, 50));
+
+        expect(listener.sent).toHaveLength(1);
+        expect(listener.sent[0].text).toContain("Aborted");
+    });
+
+    it("handles /compress slash command", async () => {
+        const { spawnFn } = createMockProcess("ok");
+        const bridge = new Bridge({ cwd: "/tmp", spawnFn });
+        daemon = new Daemon(baseConfig, bridge);
+
+        const listener = new MockListener("discord");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        listener.receive({
+            platform: "discord",
+            channel: "123",
+            sender: "@willow:athena",
+            text: "/compress",
+        });
+
+        await new Promise((r) => setTimeout(r, 50));
+
+        expect(listener.sent).toHaveLength(2);
+        expect(listener.sent[0].text).toContain("Compressing");
+        expect(listener.sent[1].text).toContain("50000");
+    });
+
+    it("handles /new slash command", async () => {
+        const { spawnFn } = createMockProcess("ok");
+        const bridge = new Bridge({ cwd: "/tmp", spawnFn });
+        daemon = new Daemon(baseConfig, bridge);
+
+        const listener = new MockListener("discord");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        listener.receive({
+            platform: "discord",
+            channel: "123",
+            sender: "@willow:athena",
+            text: "/new",
+        });
+
+        await new Promise((r) => setTimeout(r, 50));
+
+        expect(listener.sent).toHaveLength(1);
+        expect(listener.sent[0].text).toContain("new session");
+    });
+
+    it("handles /model with no args — lists available models", async () => {
+        const { spawnFn } = createMockProcess("ok");
+        const bridge = new Bridge({ cwd: "/tmp", spawnFn });
+        daemon = new Daemon(baseConfig, bridge);
+
+        const listener = new MockListener("discord");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        listener.receive({
+            platform: "discord",
+            channel: "123",
+            sender: "@willow:athena",
+            text: "/model",
+        });
+
+        await new Promise((r) => setTimeout(r, 50));
+
+        expect(listener.sent).toHaveLength(1);
+        expect(listener.sent[0].text).toContain("Claude Opus 4.5");
+        expect(listener.sent[0].text).toContain("Claude Sonnet 4");
+    });
+
+    it("handles /model <name> — switches to matching model", async () => {
+        const { spawnFn } = createMockProcess("ok");
+        const bridge = new Bridge({ cwd: "/tmp", spawnFn });
+        daemon = new Daemon(baseConfig, bridge);
+
+        const listener = new MockListener("discord");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        listener.receive({
+            platform: "discord",
+            channel: "123",
+            sender: "@willow:athena",
+            text: "/model sonnet",
+        });
+
+        await new Promise((r) => setTimeout(r, 50));
+
+        expect(listener.sent).toHaveLength(1);
+        expect(listener.sent[0].text).toContain("Claude Sonnet 4");
+    });
+
+    it("handles /model with unknown name", async () => {
+        const { spawnFn } = createMockProcess("ok");
+        const bridge = new Bridge({ cwd: "/tmp", spawnFn });
+        daemon = new Daemon(baseConfig, bridge);
+
+        const listener = new MockListener("discord");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        listener.receive({
+            platform: "discord",
+            channel: "123",
+            sender: "@willow:athena",
+            text: "/model gpt-99",
+        });
+
+        await new Promise((r) => setTimeout(r, 50));
+
+        expect(listener.sent).toHaveLength(1);
+        expect(listener.sent[0].text).toContain("No model matching");
+    });
+
+    it("does not send slash commands to pi as prompts", async () => {
+        const { spawnFn, stdin } = createMockProcess("ok");
+        const bridge = new Bridge({ cwd: "/tmp", spawnFn });
+        daemon = new Daemon(baseConfig, bridge);
+
+        const commands: any[] = [];
+        stdin.on("data", (chunk: Buffer) => {
+            for (const line of chunk.toString().split("\n").filter(Boolean)) {
+                try { commands.push(JSON.parse(line)); } catch {}
+            }
+        });
+
+        const listener = new MockListener("discord");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        listener.receive({
+            platform: "discord",
+            channel: "123",
+            sender: "@willow:athena",
+            text: "/abort",
+        });
+
+        await new Promise((r) => setTimeout(r, 50));
+
+        const prompts = commands.filter((c) => c.type === "prompt");
+        expect(prompts).toHaveLength(0);
+    });
+
     it("formats messages with platform context", async () => {
         const { spawnFn, stdin } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });

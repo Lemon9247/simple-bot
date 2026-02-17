@@ -41,6 +41,19 @@ export function createMockProcess(responseText = "Hello world!", toolCalls?: Moc
                 continue;
             }
 
+            // Build response data for specific commands
+            let responseData: any = undefined;
+            if (cmd.type === "compact") {
+                responseData = { summary: "Compacted.", tokensBefore: 50000 };
+            } else if (cmd.type === "get_available_models") {
+                responseData = {
+                    models: [
+                        { provider: "anthropic", id: "claude-opus-4-5", name: "Claude Opus 4.5" },
+                        { provider: "anthropic", id: "claude-sonnet-4", name: "Claude Sonnet 4" },
+                    ],
+                };
+            }
+
             // Acknowledge the command
             stdout.write(
                 JSON.stringify({
@@ -48,6 +61,7 @@ export function createMockProcess(responseText = "Hello world!", toolCalls?: Moc
                     type: "response",
                     command: cmd.type,
                     success: true,
+                    ...(responseData !== undefined ? { data: responseData } : {}),
                 }) + "\n"
             );
 
