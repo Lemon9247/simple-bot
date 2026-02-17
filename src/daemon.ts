@@ -7,7 +7,7 @@ const MAX_MESSAGE_LENGTH = 4000;
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX_PER_WINDOW = 10;
 
-const SLASH_COMMANDS = ["abort", "compress", "new", "model"] as const;
+const SLASH_COMMANDS = ["abort", "compress", "new", "model", "reload"] as const;
 type SlashCommand = typeof SLASH_COMMANDS[number];
 
 function formatToolCall(info: ToolCallInfo): string {
@@ -123,6 +123,15 @@ export class Daemon {
                 case "new": {
                     await this.bridge.command("new_session");
                     await reply("🆕 Started a new session.");
+                    break;
+                }
+
+                case "reload": {
+                    await reply("🔄 Reloading extensions...");
+                    // Send /reload-runtime as a prompt — it's an extension command,
+                    // which executes immediately in RPC mode without going to the LLM
+                    const response = await this.bridge.sendMessage("/reload-runtime");
+                    await reply(response || "✅ Extensions reloaded.");
                     break;
                 }
 

@@ -391,6 +391,29 @@ describe("Daemon", () => {
         expect(listener.sent[0].text).toContain("No model matching");
     });
 
+    it("handles /reload slash command", async () => {
+        const { spawnFn } = createMockProcess("Extensions reloaded!");
+        const bridge = new Bridge({ cwd: "/tmp", spawnFn });
+        daemon = new Daemon(baseConfig, bridge);
+
+        const listener = new MockListener("discord");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        listener.receive({
+            platform: "discord",
+            channel: "123",
+            sender: "@willow:athena",
+            text: "/reload",
+        });
+
+        await new Promise((r) => setTimeout(r, 50));
+
+        expect(listener.sent).toHaveLength(2);
+        expect(listener.sent[0].text).toContain("Reloading");
+        expect(listener.sent[1].text).toContain("Extensions reloaded!");
+    });
+
     it("does not send slash commands to pi as prompts", async () => {
         const { spawnFn, stdin } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });
