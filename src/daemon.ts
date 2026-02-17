@@ -1,4 +1,5 @@
 import { Bridge } from "./bridge.js";
+import { commandMap } from "./commands.js";
 import type { Config, Listener, IncomingMessage, MessageOrigin, ToolCallInfo } from "./types.js";
 import type { Heartbeat } from "./heartbeat.js";
 import * as logger from "./logger.js";
@@ -6,9 +7,7 @@ import * as logger from "./logger.js";
 const MAX_MESSAGE_LENGTH = 4000;
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX_PER_WINDOW = 10;
-
-const SLASH_COMMANDS = ["abort", "compress", "new", "model", "reload"] as const;
-type SlashCommand = typeof SLASH_COMMANDS[number];
+const COMMAND_PREFIX = "bot!";
 
 function formatToolCall(info: ToolCallInfo): string {
     const { toolName, args } = info;
@@ -86,93 +85,14 @@ export class Daemon {
         await this.bridge.stop();
     }
 
-    private parseSlashCommand(text: string): { command: SlashCommand; args: string } | null {
-        if (!text.startsWith("/")) return null;
-        const [rawCommand, ...rest] = text.slice(1).trim().split(/\s+/);
-        const command = rawCommand?.toLowerCase() as SlashCommand;
-        if (!SLASH_COMMANDS.includes(command)) return null;
-        return { command, args: rest.join(" ") };
-    }
-
-    private async handleSlashCommand(
-        command: SlashCommand,
-        args: string,
-        origin: MessageOrigin,
-        listener: Listener | undefined,
-    ): Promise<void> {
-        const reply = async (text: string) => {
-            if (listener) await listener.send(origin, text).catch(() => {});
-        };
-
-        try {
-            switch (command) {
-                case "abort": {
-                    await this.bridge.command("abort");
-                    await reply("⏹️ Aborted.");
-                    break;
-                }
-
-                case "compress": {
-                    await reply("🗜️ Compressing context...");
-                    const result = await this.bridge.command("compact", args ? { customInstructions: args } : {});
-                    const before = result?.tokensBefore ?? "?";
-                    await reply(`✅ Compressed. Tokens before: ${before}`);
-                    break;
-                }
-
-                case "new": {
-                    await this.bridge.command("new_session");
-                    await reply("🆕 Started a new session.");
-                    break;
-                }
-
-                case "reload": {
-                    await reply("🔄 Reloading extensions...");
-                    // Send /reload-runtime as a prompt — it's an extension command,
-                    // which executes immediately in RPC mode without going to the LLM
-                    const response = await this.bridge.sendMessage("/reload-runtime");
-                    await reply(response || "✅ Extensions reloaded.");
-                    break;
-                }
-
-                case "model": {
-                    if (!args) {
-                        // List available models
-                        const result = await this.bridge.command("get_available_models");
-                        const models: any[] = result?.models ?? [];
-                        if (models.length === 0) {
-                            await reply("No models available.");
-                        } else {
-                            const list = models
-                                .map((m: any) => `• \`${m.provider}/${m.id}\` — ${m.name}`)
-                                .join("\n");
-                            await reply(`**Available models:**\n${list}\n\nUse \`/model <name>\` to switch.`);
-                        }
-                    } else {
-                        // Find and switch to matching model
-                        const result = await this.bridge.command("get_available_models");
-                        const models: any[] = result?.models ?? [];
-                        const query = args.toLowerCase();
-                        const match = models.find(
-                            (m: any) =>
-                                m.id.toLowerCase().includes(query) ||
-                                m.name.toLowerCase().includes(query) ||
-                                `${m.provider}/${m.id}`.toLowerCase().includes(query),
-                        );
-                        if (!match) {
-                            await reply(`❌ No model matching \`${args}\`. Use \`/model\` to list available models.`);
-                        } else {
-                            await this.bridge.command("set_model", { provider: match.provider, modelId: match.id });
-                            await reply(`✅ Switched to **${match.name}** (\`${match.provider}/${match.id}\`).`);
-                        }
-                    }
-                    break;
-                }
-            }
-        } catch (err) {
-            logger.error("Slash command failed", { command, error: String(err) });
-            await reply(`❌ Command failed: ${String(err)}`);
-        }
+    private parseCommand(text: string): { name: string; args: string } | null {
+        if (!text.toLowerCase().startsWith(COMMAND_PREFIX)) return null;
+        const rest = text.slice(COMMAND_PREFIX.length).trim();
+        if (!rest) return null;
+        const [rawName, ...argParts] = rest.split(/\s+/);
+        const name = rawName.toLowerCase();
+        if (!commandMap.has(name)) return null;
+        return { name, args: argParts.join(" ") };
     }
 
     private async handleMessage(msg: IncomingMessage): Promise<void> {
@@ -200,12 +120,26 @@ export class Daemon {
             channel: msg.channel,
         };
         const listener = this.listeners.find((l) => l.name === msg.platform);
+        const reply = async (text: string) => {
+            if (listener) await listener.send(origin, text).catch(() => {});
+        };
 
-        // Handle slash commands before passing to the agent
-        const slash = this.parseSlashCommand(msg.text);
-        if (slash) {
-            logger.info("Handling slash command", { command: slash.command, sender: msg.sender });
-            await this.handleSlashCommand(slash.command, slash.args, origin, listener);
+        // Handle bot commands before passing to the agent
+        const parsed = this.parseCommand(msg.text);
+        if (parsed) {
+            const command = commandMap.get(parsed.name)!;
+            logger.info("Handling command", { command: parsed.name, sender: msg.sender });
+
+            if (command.interrupts) {
+                this.bridge.cancelPending(`Interrupted by bot!${parsed.name}`);
+            }
+
+            try {
+                await command.execute({ args: parsed.args, bridge: this.bridge, reply });
+            } catch (err) {
+                logger.error("Command failed", { command: parsed.name, error: String(err) });
+                await reply(`❌ Command failed: ${String(err)}`);
+            }
             return;
         }
 

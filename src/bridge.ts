@@ -107,6 +107,13 @@ export class Bridge extends EventEmitter {
         return this.responseQueue.length > 0;
     }
 
+    cancelPending(reason?: string): void {
+        const err = new Error(reason ?? "Cancelled");
+        for (const { reject } of this.responseQueue) reject(err);
+        this.responseQueue = [];
+        this.responseText = "";
+    }
+
     steer(text: string): void {
         if (!this.proc?.stdin?.writable) return;
         this.rpc("steer", { message: text }).catch((err) => {

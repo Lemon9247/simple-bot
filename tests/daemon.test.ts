@@ -25,7 +25,6 @@ describe("Daemon", () => {
         daemon.addListener(listener);
         await daemon.start();
 
-        // Simulate incoming message
         listener.receive({
             platform: "matrix",
             channel: "#general",
@@ -33,7 +32,6 @@ describe("Daemon", () => {
             text: "hey hades",
         });
 
-        // Wait for async processing
         await new Promise((r) => setTimeout(r, 50));
 
         expect(listener.sent).toHaveLength(1);
@@ -75,7 +73,6 @@ describe("Daemon", () => {
         daemon.addListener(discord);
         await daemon.start();
 
-        // Send from matrix
         matrix.receive({
             platform: "matrix",
             channel: "#hades",
@@ -119,7 +116,6 @@ describe("Daemon", () => {
     });
 
     it("sends intermediate text as separate messages before tool calls", async () => {
-        // Custom mock: text → tool → more text
         const { proc, stdin, stdout } = createMockProcess();
         stdin.removeAllListeners("data");
         stdin.on("data", (chunk: Buffer) => {
@@ -175,7 +171,6 @@ describe("Daemon", () => {
 
         await new Promise((r) => setTimeout(r, 50));
 
-        // Intermediate text, tool summary, final text
         expect(listener.sent).toHaveLength(3);
         expect(listener.sent[0].text).toBe("Let me look at that.");
         expect(listener.sent[1].text).toBe("📖 Reading `config.ts`");
@@ -183,7 +178,6 @@ describe("Daemon", () => {
     });
 
     it("steers instead of queuing when bridge is busy", async () => {
-        // Slow mock — holds the first message in flight
         const { proc, stdin, stdout } = createMockProcess();
         stdin.removeAllListeners("data");
 
@@ -197,14 +191,12 @@ describe("Daemon", () => {
                 try { cmd = JSON.parse(line); } catch { continue; }
                 commands.push(cmd);
 
-                // Acknowledge all RPCs
                 stdout.write(
                     JSON.stringify({ id: cmd.id, type: "response", command: cmd.type, success: true }) + "\n"
                 );
 
                 if (cmd.type === "prompt") {
                     stdout.write(JSON.stringify({ type: "agent_start" }) + "\n");
-                    // Hold — don't send agent_end until we say so
                     resolveFirst = () => {
                         stdout.write(JSON.stringify({
                             type: "message_update",
@@ -223,7 +215,6 @@ describe("Daemon", () => {
         daemon.addListener(listener);
         await daemon.start();
 
-        // First message — starts processing
         listener.receive({
             platform: "matrix",
             channel: "#general",
@@ -233,7 +224,6 @@ describe("Daemon", () => {
 
         await new Promise((r) => setTimeout(r, 20));
 
-        // Second message while first is in flight — should steer
         listener.receive({
             platform: "matrix",
             channel: "#general",
@@ -243,21 +233,18 @@ describe("Daemon", () => {
 
         await new Promise((r) => setTimeout(r, 20));
 
-        // Check commands sent to pi
         const steerCmd = commands.find((c) => c.type === "steer");
         expect(steerCmd).toBeDefined();
         expect(steerCmd.message).toContain("actually do this instead");
 
-        // No second prompt should have been sent
         const prompts = commands.filter((c) => c.type === "prompt");
         expect(prompts).toHaveLength(1);
 
-        // Resolve the first message
         resolveFirst!();
         await new Promise((r) => setTimeout(r, 20));
     });
 
-    it("handles /abort slash command", async () => {
+    it("handles bot!abort command", async () => {
         const { spawnFn } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });
         daemon = new Daemon(baseConfig, bridge);
@@ -270,7 +257,7 @@ describe("Daemon", () => {
             platform: "discord",
             channel: "123",
             sender: "@willow:athena",
-            text: "/abort",
+            text: "bot!abort",
         });
 
         await new Promise((r) => setTimeout(r, 50));
@@ -279,7 +266,7 @@ describe("Daemon", () => {
         expect(listener.sent[0].text).toContain("Aborted");
     });
 
-    it("handles /compress slash command", async () => {
+    it("handles bot!compress command", async () => {
         const { spawnFn } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });
         daemon = new Daemon(baseConfig, bridge);
@@ -292,7 +279,7 @@ describe("Daemon", () => {
             platform: "discord",
             channel: "123",
             sender: "@willow:athena",
-            text: "/compress",
+            text: "bot!compress",
         });
 
         await new Promise((r) => setTimeout(r, 50));
@@ -302,7 +289,7 @@ describe("Daemon", () => {
         expect(listener.sent[1].text).toContain("50000");
     });
 
-    it("handles /new slash command", async () => {
+    it("handles bot!new command", async () => {
         const { spawnFn } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });
         daemon = new Daemon(baseConfig, bridge);
@@ -315,7 +302,7 @@ describe("Daemon", () => {
             platform: "discord",
             channel: "123",
             sender: "@willow:athena",
-            text: "/new",
+            text: "bot!new",
         });
 
         await new Promise((r) => setTimeout(r, 50));
@@ -324,7 +311,7 @@ describe("Daemon", () => {
         expect(listener.sent[0].text).toContain("new session");
     });
 
-    it("handles /model with no args — lists available models", async () => {
+    it("handles bot!model with no args — lists available models", async () => {
         const { spawnFn } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });
         daemon = new Daemon(baseConfig, bridge);
@@ -337,7 +324,7 @@ describe("Daemon", () => {
             platform: "discord",
             channel: "123",
             sender: "@willow:athena",
-            text: "/model",
+            text: "bot!model",
         });
 
         await new Promise((r) => setTimeout(r, 50));
@@ -347,7 +334,7 @@ describe("Daemon", () => {
         expect(listener.sent[0].text).toContain("Claude Sonnet 4");
     });
 
-    it("handles /model <name> — switches to matching model", async () => {
+    it("handles bot!model <name> — switches to matching model", async () => {
         const { spawnFn } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });
         daemon = new Daemon(baseConfig, bridge);
@@ -360,7 +347,7 @@ describe("Daemon", () => {
             platform: "discord",
             channel: "123",
             sender: "@willow:athena",
-            text: "/model sonnet",
+            text: "bot!model sonnet",
         });
 
         await new Promise((r) => setTimeout(r, 50));
@@ -369,7 +356,7 @@ describe("Daemon", () => {
         expect(listener.sent[0].text).toContain("Claude Sonnet 4");
     });
 
-    it("handles /model with unknown name", async () => {
+    it("handles bot!model with unknown name", async () => {
         const { spawnFn } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });
         daemon = new Daemon(baseConfig, bridge);
@@ -382,7 +369,7 @@ describe("Daemon", () => {
             platform: "discord",
             channel: "123",
             sender: "@willow:athena",
-            text: "/model gpt-99",
+            text: "bot!model gpt-99",
         });
 
         await new Promise((r) => setTimeout(r, 50));
@@ -391,8 +378,8 @@ describe("Daemon", () => {
         expect(listener.sent[0].text).toContain("No model matching");
     });
 
-    it("handles /reload slash command", async () => {
-        const { spawnFn } = createMockProcess("Extensions reloaded!");
+    it("handles bot!reload command", async () => {
+        const { spawnFn } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });
         daemon = new Daemon(baseConfig, bridge);
 
@@ -404,17 +391,17 @@ describe("Daemon", () => {
             platform: "discord",
             channel: "123",
             sender: "@willow:athena",
-            text: "/reload",
+            text: "bot!reload",
         });
 
         await new Promise((r) => setTimeout(r, 50));
 
         expect(listener.sent).toHaveLength(2);
         expect(listener.sent[0].text).toContain("Reloading");
-        expect(listener.sent[1].text).toContain("Extensions reloaded!");
+        expect(listener.sent[1].text).toContain("Extensions reloaded");
     });
 
-    it("does not send slash commands to pi as prompts", async () => {
+    it("does not send bot commands to pi as prompts", async () => {
         const { spawnFn, stdin } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });
         daemon = new Daemon(baseConfig, bridge);
@@ -434,7 +421,7 @@ describe("Daemon", () => {
             platform: "discord",
             channel: "123",
             sender: "@willow:athena",
-            text: "/abort",
+            text: "bot!abort",
         });
 
         await new Promise((r) => setTimeout(r, 50));
@@ -443,12 +430,63 @@ describe("Daemon", () => {
         expect(prompts).toHaveLength(0);
     });
 
+    it("passes unknown bot! prefixed messages to pi as regular messages", async () => {
+        const { spawnFn, stdin } = createMockProcess("ok");
+        const bridge = new Bridge({ cwd: "/tmp", spawnFn });
+        daemon = new Daemon(baseConfig, bridge);
+
+        const commands: any[] = [];
+        stdin.on("data", (chunk: Buffer) => {
+            for (const line of chunk.toString().split("\n").filter(Boolean)) {
+                try { commands.push(JSON.parse(line)); } catch {}
+            }
+        });
+
+        const listener = new MockListener("discord");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        listener.receive({
+            platform: "discord",
+            channel: "123",
+            sender: "@willow:athena",
+            text: "bot!unknownthing",
+        });
+
+        await new Promise((r) => setTimeout(r, 50));
+
+        const prompts = commands.filter((c) => c.type === "prompt");
+        expect(prompts).toHaveLength(1);
+        expect(prompts[0].message).toContain("bot!unknownthing");
+    });
+
+    it("command prefix is case-insensitive", async () => {
+        const { spawnFn } = createMockProcess("ok");
+        const bridge = new Bridge({ cwd: "/tmp", spawnFn });
+        daemon = new Daemon(baseConfig, bridge);
+
+        const listener = new MockListener("discord");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        listener.receive({
+            platform: "discord",
+            channel: "123",
+            sender: "@willow:athena",
+            text: "Bot!Abort",
+        });
+
+        await new Promise((r) => setTimeout(r, 50));
+
+        expect(listener.sent).toHaveLength(1);
+        expect(listener.sent[0].text).toContain("Aborted");
+    });
+
     it("formats messages with platform context", async () => {
         const { spawnFn, stdin } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });
         daemon = new Daemon(baseConfig, bridge);
 
-        // Capture what gets sent to pi
         const commands: any[] = [];
         stdin.on("data", (chunk: Buffer) => {
             for (const line of chunk.toString().split("\n").filter(Boolean)) {
