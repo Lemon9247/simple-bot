@@ -114,6 +114,13 @@ export class Bridge extends EventEmitter {
         });
     }
 
+    command(type: string, params: Record<string, unknown> = {}): Promise<any> {
+        if (!this.proc?.stdin?.writable) {
+            return Promise.reject(new Error("Pi process not running"));
+        }
+        return this.rpc(type, params);
+    }
+
     private rpc(type: string, params: Record<string, unknown> = {}): Promise<any> {
         const id = randomUUID();
         const line = JSON.stringify({ id, type, ...params });
