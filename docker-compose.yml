@@ -3,9 +3,11 @@ services:
         build: .
         restart: unless-stopped
         user: "0:0"  # safe — rootless Docker maps UID 0 to host user
+        network_mode: host
         volumes:
             - ./config.yaml:/config/config.yaml:ro
-            - ${PI_CWD}:/pi-cwd              # pi's working directory
-            - ${PI_HOME:-~/.pi}:/root/.pi  # pi agent config, auth, extensions
+            - ../home:/home/wren           # Wren's persistent home directory
+        environment:
+            - HOME=/home/wren
         env_file:
             - .env

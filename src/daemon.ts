@@ -37,6 +37,7 @@ export class Daemon {
     private listeners: Listener[] = [];
     private heartbeat?: Heartbeat;
     private stopping = false;
+    private commandRunning = false;
     private rateLimits = new Map<string, number[]>();
 
     constructor(config: Config, bridge?: Bridge, heartbeat?: Heartbeat) {
@@ -134,16 +135,27 @@ export class Daemon {
                 this.bridge.cancelPending(`Interrupted by bot!${parsed.name}`);
             }
 
+            this.commandRunning = true;
             try {
                 await command.execute({ args: parsed.args, bridge: this.bridge, reply });
             } catch (err) {
                 logger.error("Command failed", { command: parsed.name, error: String(err) });
                 await reply(`❌ Command failed: ${String(err)}`);
+            } finally {
+                this.commandRunning = false;
             }
             return;
         }
 
         const formatted = `[${msg.platform} ${msg.channel}] ${msg.sender}: ${msg.text}`;
+
+        // If a command is running (e.g. compact), don't send prompts —
+        // pi may drop them or leave the response queue dangling.
+        if (this.commandRunning) {
+            logger.info("Message deferred, command running", { sender: msg.sender });
+            await reply("⏳ Hold on, running a command...");
+            return;
+        }
 
         // If the agent is mid-chain, steer instead of queuing a new prompt
         if (this.bridge.busy) {
