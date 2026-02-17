@@ -7,6 +7,7 @@ services:
         volumes:
             - ./config.yaml:/config/config.yaml:ro
             - ../home:/home/wren           # Wren's persistent home directory
+            - ~/Documents/Obsidian/Claude:/hades:ro  # Hades vault
         environment:
             - HOME=/home/wren
         env_file:
