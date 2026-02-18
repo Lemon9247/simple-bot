@@ -7,6 +7,7 @@ import type { Config, Listener, IncomingMessage, MessageOrigin, ToolCallInfo, To
 import type { Scheduler } from "./scheduler.js";
 import * as logger from "./logger.js";
 import { cleanupInbox, saveToInbox } from "./inbox.js";
+import { compressImage } from "./image.js";
 
 const MAX_MESSAGE_LENGTH = 4000;
 const RATE_WINDOW_MS = 60_000;
@@ -280,10 +281,13 @@ export class Daemon {
 
         for (const att of attachments) {
             if (att.base64 && att.contentType.startsWith("image/")) {
+                const compressed = att.data
+                    ? await compressImage(att.data, att.contentType)
+                    : null;
                 images.push({
                     type: "image",
-                    data: att.base64,
-                    mimeType: att.contentType,
+                    data: compressed?.base64 ?? att.base64,
+                    mimeType: compressed?.mimeType ?? att.contentType,
                 });
             } else if (att.data) {
                 const saved = await saveToInbox(att.filename, att.data);
