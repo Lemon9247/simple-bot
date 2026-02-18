@@ -6,12 +6,10 @@ services:
         cap_add:
             - NET_ADMIN  # for iptables LAN blocking in entrypoint
         networks:
-            isolated:
-            shared-services:
+            - isolated
         volumes:
             - ./config.yaml:/config/config.yaml:ro
-            - ../home:/home/wren           # Wren's persistent home directory
-            - ~/Documents/Obsidian/Claude:/hades:ro  # Hades vault
+            - ./home:/home/wren           # Persistent home directory
         environment:
             - HOME=/home/wren
         env_file:
@@ -20,5 +18,3 @@ services:
 networks:
     isolated:
         driver: bridge
-    shared-services:
-        external: true

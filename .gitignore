@@ -4,3 +4,6 @@ dist/
 config.yaml
 matrix-bot.json
 /scratchpad
+Dockerfile
+docker-compose.yml
+scripts/entrypoint.sh
