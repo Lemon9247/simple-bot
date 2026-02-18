@@ -3,7 +3,10 @@ services:
         build: .
         restart: unless-stopped
         user: "0:0"  # safe — rootless Docker maps UID 0 to host user
-        network_mode: host
+        cap_add:
+            - NET_ADMIN  # for iptables LAN blocking in entrypoint
+        networks:
+            - isolated
         volumes:
             - ./config.yaml:/config/config.yaml:ro
             - ../home:/home/wren           # Wren's persistent home directory
@@ -12,3 +15,7 @@ services:
             - HOME=/home/wren
         env_file:
             - .env
+
+networks:
+    isolated:
+        driver: bridge

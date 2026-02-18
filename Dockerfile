@@ -29,6 +29,7 @@ RUN apt-get update && apt-get install -y \
     # Networking
     ca-certificates \
     dnsutils \
+    iptables \
     && rm -rf /var/lib/apt/lists/*
 
 # pi coding agent
@@ -40,5 +41,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY --from=build /app/dist/ dist/
 
-ENTRYPOINT ["node", "dist/main.js"]
-CMD ["/config/config.yaml"]
+COPY scripts/entrypoint.sh /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["node", "dist/main.js", "/config/config.yaml"]
