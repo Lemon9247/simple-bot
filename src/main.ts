@@ -1,7 +1,7 @@
 import { loadConfig } from "./config.js";
 import { Daemon } from "./daemon.js";
 import { Bridge } from "./bridge.js";
-import { Heartbeat } from "./heartbeat.js";
+import { Scheduler } from "./scheduler.js";
 import * as logger from "./logger.js";
 
 const configPath = process.argv[2] ?? "config.yaml";
@@ -13,11 +13,11 @@ const bridge = new Bridge({
     args: config.pi.args,
 });
 
-const heartbeat = config.heartbeat?.enabled
-    ? new Heartbeat(config.heartbeat, bridge)
+const scheduler = config.cron
+    ? new Scheduler(config.cron, bridge)
     : undefined;
 
-const daemon = new Daemon(config, bridge, heartbeat);
+const daemon = new Daemon(config, bridge, scheduler);
 
 // Wire up configured listeners
 if (config.matrix) {

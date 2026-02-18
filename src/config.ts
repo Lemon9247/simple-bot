@@ -34,4 +34,9 @@ function validate(config: unknown): asserts config is Config {
     if (!Array.isArray(c.security?.allowed_users) || c.security.allowed_users.length === 0) {
         throw new Error("config: security.allowed_users must have at least one entry");
     }
+    if (c.cron) {
+        if (!c.cron.dir || typeof c.cron.dir !== "string") {
+            throw new Error("config: cron.dir is required and must be a string");
+        }
+    }
 }

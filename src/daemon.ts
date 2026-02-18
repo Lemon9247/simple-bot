@@ -1,7 +1,7 @@
 import { Bridge } from "./bridge.js";
 import { commandMap } from "./commands.js";
 import type { Config, Listener, IncomingMessage, MessageOrigin, ToolCallInfo } from "./types.js";
-import type { Heartbeat } from "./heartbeat.js";
+import type { Scheduler } from "./scheduler.js";
 import * as logger from "./logger.js";
 
 const MAX_MESSAGE_LENGTH = 4000;
@@ -35,19 +35,19 @@ export class Daemon {
     private config: Config;
     private bridge: Bridge;
     private listeners: Listener[] = [];
-    private heartbeat?: Heartbeat;
+    private scheduler?: Scheduler;
     private stopping = false;
     private commandRunning = false;
     private rateLimits = new Map<string, number[]>();
 
-    constructor(config: Config, bridge?: Bridge, heartbeat?: Heartbeat) {
+    constructor(config: Config, bridge?: Bridge, scheduler?: Scheduler) {
         this.config = config;
         this.bridge = bridge ?? new Bridge({
             cwd: config.pi.cwd,
             command: config.pi.command,
             args: config.pi.args,
         });
-        this.heartbeat = heartbeat;
+        this.scheduler = scheduler;
     }
 
     addListener(listener: Listener): void {
@@ -67,9 +67,11 @@ export class Daemon {
             await listener.connect();
         }
 
-        if (this.heartbeat) {
-            this.heartbeat.on("response", (response: string) => this.handleHeartbeatResponse(response));
-            this.heartbeat.start();
+        if (this.scheduler) {
+            this.scheduler.on("response", ({ job, response }: { job: any; response: string }) => {
+                this.handleSchedulerResponse(job, response);
+            });
+            await this.scheduler.start();
         }
 
         logger.info("simple-bot started", { listeners: this.listeners.length });
@@ -77,8 +79,8 @@ export class Daemon {
 
     async stop(): Promise<void> {
         this.stopping = true;
-        if (this.heartbeat) {
-            this.heartbeat.stop();
+        if (this.scheduler) {
+            this.scheduler.stop();
         }
         for (const listener of this.listeners) {
             await listener.disconnect().catch(() => {});
@@ -191,14 +193,14 @@ export class Daemon {
         }
     }
 
-    private async handleHeartbeatResponse(response: string): Promise<void> {
-        if (!this.config.heartbeat) return;
+    private async handleSchedulerResponse(job: any, response: string): Promise<void> {
+        const notifyRoom = this.resolveNotify(job);
+        if (!notifyRoom) return;
 
-        const notifyRoom = this.config.heartbeat.notify_room;
         const [platform, channel] = this.parseRoomId(notifyRoom);
 
         if (!platform || !channel) {
-            logger.error("Invalid notify_room format", { notifyRoom });
+            logger.error("Invalid notify room format", { notifyRoom, job: job.name });
             return;
         }
 
@@ -209,11 +211,17 @@ export class Daemon {
             try {
                 await listener.send(origin, response);
             } catch (err) {
-                logger.error("Failed to send heartbeat response", { error: String(err) });
+                logger.error("Failed to send cron job response", { job: job.name, error: String(err) });
             }
         } else {
-            logger.error("No listener found for platform", { platform });
+            logger.error("No listener found for platform", { platform, job: job.name });
         }
+    }
+
+    private resolveNotify(job: any): string | null {
+        if (job.notify === "none") return null;
+        if (job.notify) return job.notify;
+        return this.config.cron?.default_notify ?? null;
     }
 
     private parseRoomId(roomId: string): [string | null, string | null] {

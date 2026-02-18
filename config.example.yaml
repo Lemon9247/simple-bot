@@ -16,9 +16,6 @@ security:
     allowed_users:
         - "willowsparks"    # Discord username
 
-# heartbeat:
-#     enabled: true
-#     interval: 4h
-#     active_hours: "08:00-23:00"
-#     checklist: /pi-cwd/HEARTBEAT.md
-#     notify_room: "#hades:athena"
+# cron:
+#     dir: /pi-cwd/cron.d
+#     default_notify: "#hades:athena"    # or Discord channel ID

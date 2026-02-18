@@ -41,10 +41,27 @@ export interface Config {
     discord?: {
         token: string;
     };
-    heartbeat?: {
-        enabled: boolean;
-        schedule: string;
-        checklist: string;
-        notify_room: string;
-    };
+    cron?: CronConfig;
+}
+
+export interface CronConfig {
+    dir: string;
+    default_notify?: string;
+}
+
+export type Step =
+    | { type: "new-session" }
+    | { type: "compact" }
+    | { type: "model"; model: string }
+    | { type: "prompt" }
+    | { type: "reload" };
+
+export interface JobDefinition {
+    name: string;
+    file: string;
+    schedule: string;
+    steps: Step[];
+    notify: string | "none" | null;  // null = inherit default
+    enabled: boolean;
+    body: string;
 }
