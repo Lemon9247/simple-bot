@@ -213,26 +213,11 @@ export class Bridge extends EventEmitter {
             }
         }
 
-        // Accumulate assistant text deltas (streaming path)
+        // Accumulate assistant text deltas
         if (event.type === "message_update") {
             const delta = event.assistantMessageEvent;
             if (delta?.type === "text_delta") {
                 this.responseText += delta.delta;
-            }
-        }
-
-        // Fallback: extract text from message_end if no streaming deltas arrived
-        // Some pi versions/models don't emit message_update events
-        if (event.type === "message_end") {
-            const msg = event.message;
-            if (msg?.role === "assistant" && !this.responseText) {
-                const textBlocks = Array.isArray(msg.content)
-                    ? msg.content.filter((b: any) => b.type === "text")
-                    : [];
-                const text = textBlocks.map((b: any) => b.text).join("");
-                if (text) {
-                    this.responseText = text;
-                }
             }
         }
 
