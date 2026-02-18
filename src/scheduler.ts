@@ -81,10 +81,12 @@ export class Scheduler extends EventEmitter {
                 return;
             }
 
-            const task = cron.schedule(definition.schedule, () => {
-                this.executeJob(definition).catch((err) => {
+            const task = cron.schedule(definition.schedule, async () => {
+                try {
+                    await this.executeJob(definition);
+                } catch (err) {
                     logger.error("Job execution failed", { name: definition.name, error: String(err) });
-                });
+                }
             });
 
             this.jobs.set(definition.name, { definition, task });
