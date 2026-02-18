@@ -193,11 +193,11 @@ export class Daemon {
                     });
                 },
                 onToolEnd: (info: ToolEndInfo) => {
-                    if (info.toolName === "attach" && !info.isError) {
-                        const filePath = info.args?.path;
+                    if (info.toolName === "attach" && !info.isError && info.result?.details) {
+                        const filePath = info.result.details.path;
                         if (typeof filePath === "string") {
                             pendingReads.push(
-                                this.queueAttachFile(filePath, info.args?.filename, pendingFiles),
+                                this.queueAttachFile(filePath, info.result.details.filename, pendingFiles),
                             );
                         }
                     }

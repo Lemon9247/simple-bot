@@ -41,7 +41,10 @@ export interface ToolCallInfo {
 export interface ToolEndInfo {
     toolName: string;
     toolCallId: string;
-    args: Record<string, any>;
+    result?: {
+        content: Array<{ type: string; text?: string }>;
+        details?: Record<string, any>;
+    };
     isError: boolean;
 }
 

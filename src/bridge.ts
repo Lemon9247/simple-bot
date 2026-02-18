@@ -207,7 +207,7 @@ export class Bridge extends EventEmitter {
                 current.onToolEnd({
                     toolName: event.toolName,
                     toolCallId: event.toolCallId ?? "",
-                    args: event.args ?? {},
+                    result: event.result,
                     isError: event.isError ?? false,
                 });
             }

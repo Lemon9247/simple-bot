@@ -89,9 +89,9 @@ export class DiscordListener implements Listener {
             this.messageHandler(msg);
         });
 
-        this.client.on("emojiUpdate", () => {
-            this.buildEmojiCache();
-        });
+        this.client.on("emojiCreate", () => this.buildEmojiCache());
+        this.client.on("emojiDelete", () => this.buildEmojiCache());
+        this.client.on("emojiUpdate", () => this.buildEmojiCache());
 
         this.client.on("error", (err) => {
             logger.error("Discord client error", { error: String(err) });
