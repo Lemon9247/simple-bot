@@ -391,6 +391,95 @@ steps:
         }
     });
 
+    it("skips second job when first is still executing", async () => {
+        await writeJob("slow", `---
+schedule: "0 7 * * *"
+steps:
+  - compact
+---`);
+
+        let resolveCompact: () => void;
+        const compactPromise = new Promise<void>((r) => { resolveCompact = r; });
+
+        const bridge = makeBridge({
+            command: vi.fn().mockImplementation((type: string) => {
+                if (type === "compact") return compactPromise;
+                return Promise.resolve(undefined);
+            }),
+        });
+
+        const scheduler = new Scheduler({ dir: cronDir }, bridge);
+        await scheduler.start();
+
+        // Start the slow job (blocks on compact)
+        const slowCb = getLastScheduledCallback()!;
+        const slowPromise = slowCb();
+
+        // Now add a second job while the first is executing
+        await writeJob("fast", `---
+schedule: "0 7 * * *"
+steps:
+  - new-session
+---`);
+        await new Promise((r) => setTimeout(r, 500)); // wait for hot reload
+
+        // Fire the second job — should be skipped due to mutex
+        const callbacks = [...scheduledCallbacks.values()];
+        const fastCb = callbacks[callbacks.length - 1];
+        const fastPromise = fastCb();
+
+        // Let the first job finish
+        resolveCompact!();
+        await slowPromise;
+        await fastPromise;
+
+        const calls = (bridge.command as any).mock.calls.map((c: any) => c[0]);
+        expect(calls).toContain("compact");
+        expect(calls).not.toContain("new_session");
+
+        scheduler.stop();
+    });
+
+    it("stop() waits for in-flight job execution", async () => {
+        await writeJob("test", `---
+schedule: "0 7 * * *"
+steps:
+  - compact
+---`);
+
+        let resolveCompact: () => void;
+        const compactPromise = new Promise<void>((r) => { resolveCompact = r; });
+
+        const callOrder: string[] = [];
+        const bridge = makeBridge({
+            command: vi.fn().mockImplementation((type: string) => {
+                callOrder.push(`command:${type}`);
+                if (type === "compact") return compactPromise;
+                return Promise.resolve(undefined);
+            }),
+        });
+
+        const scheduler = new Scheduler({ dir: cronDir }, bridge);
+        await scheduler.start();
+
+        // Start a job
+        const jobPromise = getLastScheduledCallback()!();
+
+        // Immediately stop — should wait for job
+        const stopPromise = scheduler.stop();
+
+        // Job is still running (compact hasn't resolved)
+        expect(callOrder).toContain("command:compact");
+
+        // Resolve compact so the job can finish
+        resolveCompact!();
+        await jobPromise;
+        await stopPromise;
+
+        // Stop completed after the job finished
+        expect(scheduler.getJobs().size).toBe(0);
+    });
+
     it("handles missing cron directory gracefully", async () => {
         const bridge = makeBridge();
         const scheduler = new Scheduler({ dir: "/nonexistent/path" }, bridge);

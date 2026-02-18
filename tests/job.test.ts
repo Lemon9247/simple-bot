@@ -25,7 +25,11 @@ describe("parseStep", () => {
     });
 
     it("rejects non-string model value", () => {
-        expect(() => parseStep({ model: 123 })).toThrow("Invalid step");
+        expect(() => parseStep({ model: 123 })).toThrow("value must be a string");
+    });
+
+    it("rejects model step with extra keys", () => {
+        expect(() => parseStep({ model: "haiku", typo: "yes" })).toThrow("unexpected extra keys: typo");
     });
 
     it("rejects array", () => {
@@ -46,6 +50,11 @@ describe("parseSteps", () => {
 
     it("rejects non-array", () => {
         expect(() => parseSteps("prompt")).toThrow("steps must be an array");
+    });
+
+    it("includes step index in error messages", () => {
+        const raw = ["new-session", "compact", "bogus"];
+        expect(() => parseSteps(raw)).toThrow("step[2]:");
     });
 });
 
@@ -189,6 +198,16 @@ steps:
 ---`;
         const job = parseJobContent(content, "/cron.d/compact.md");
         expect(job.body).toBe("");
+    });
+
+    it("rejects non-boolean enabled value", () => {
+        const content = `---
+schedule: "0 7 * * *"
+enabled: "false"
+steps:
+  - compact
+---`;
+        expect(() => parseJobContent(content, "test.md")).toThrow("enabled must be a boolean");
     });
 
     it("derives job name from filename", () => {

@@ -1,4 +1,4 @@
-import { readdir } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { watch, type FSWatcher } from "node:fs";
 import { EventEmitter } from "node:events";
@@ -19,6 +19,8 @@ export class Scheduler extends EventEmitter {
     private jobs = new Map<string, ActiveJob>();
     private watcher: FSWatcher | null = null;
     private debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    private executing = false;
+    private activeExecution: Promise<void> | null = null;
 
     constructor(config: CronConfig, bridge: Bridge) {
         super();
@@ -32,7 +34,7 @@ export class Scheduler extends EventEmitter {
         logger.info("Scheduler started", { dir: this.config.dir, jobs: this.jobs.size });
     }
 
-    stop(): void {
+    async stop(): Promise<void> {
         this.stopWatcher();
         for (const [name, active] of this.jobs) {
             active.task.stop();
@@ -43,6 +45,11 @@ export class Scheduler extends EventEmitter {
             clearTimeout(timer);
         }
         this.debounceTimers.clear();
+
+        // Wait for any in-flight job execution to finish
+        if (this.activeExecution) {
+            await this.activeExecution;
+        }
     }
 
     getJobs(): Map<string, ActiveJob> {
@@ -106,11 +113,24 @@ export class Scheduler extends EventEmitter {
     }
 
     private async executeJob(job: JobDefinition): Promise<void> {
-        if (this.bridge.busy) {
-            logger.info("Skipping cron job, bridge is busy", { name: job.name });
+        if (this.bridge.busy || this.executing) {
+            logger.info("Skipping cron job, busy", { name: job.name });
             return;
         }
 
+        this.executing = true;
+        const execution = this.runSteps(job);
+        this.activeExecution = execution;
+
+        try {
+            await execution;
+        } finally {
+            this.executing = false;
+            this.activeExecution = null;
+        }
+    }
+
+    private async runSteps(job: JobDefinition): Promise<void> {
         logger.info("Executing cron job", { name: job.name, steps: job.steps.length });
 
         for (const step of job.steps) {
@@ -176,7 +196,7 @@ export class Scheduler extends EventEmitter {
         }
     }
 
-    // --- Directory watching (Phase 2) ---
+    // --- Hot reload ---
 
     private startWatcher(): void {
         try {
@@ -210,12 +230,9 @@ export class Scheduler extends EventEmitter {
 
                 // Check if file still exists (might have been deleted)
                 try {
-                    const { stat } = await import("node:fs/promises");
                     await stat(filePath);
-                    // File exists — load/reload it
                     await this.loadJob(filePath);
                 } catch {
-                    // File gone — remove the job
                     this.removeJob(name);
                 }
             }, 300),

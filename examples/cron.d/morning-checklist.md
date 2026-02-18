@@ -1,5 +1,6 @@
 ---
 schedule: "0 7 * * *"
+# notify: "123456789"  # or set cron.default_notify in config.yaml
 steps:
   - new-session
   - prompt

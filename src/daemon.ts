@@ -1,6 +1,6 @@
 import { Bridge } from "./bridge.js";
 import { commandMap } from "./commands.js";
-import type { Config, Listener, IncomingMessage, MessageOrigin, ToolCallInfo } from "./types.js";
+import type { Config, Listener, IncomingMessage, MessageOrigin, ToolCallInfo, JobDefinition } from "./types.js";
 import type { Scheduler } from "./scheduler.js";
 import * as logger from "./logger.js";
 
@@ -68,8 +68,10 @@ export class Daemon {
         }
 
         if (this.scheduler) {
-            this.scheduler.on("response", ({ job, response }: { job: any; response: string }) => {
-                this.handleSchedulerResponse(job, response);
+            this.scheduler.on("response", ({ job, response }: { job: JobDefinition; response: string }) => {
+                this.handleSchedulerResponse(job, response).catch((err) => {
+                    logger.error("Unhandled error in scheduler response", { job: job.name, error: String(err) });
+                });
             });
             await this.scheduler.start();
         }
@@ -80,7 +82,7 @@ export class Daemon {
     async stop(): Promise<void> {
         this.stopping = true;
         if (this.scheduler) {
-            this.scheduler.stop();
+            await this.scheduler.stop();
         }
         for (const listener of this.listeners) {
             await listener.disconnect().catch(() => {});
@@ -193,7 +195,7 @@ export class Daemon {
         }
     }
 
-    private async handleSchedulerResponse(job: any, response: string): Promise<void> {
+    private async handleSchedulerResponse(job: JobDefinition, response: string): Promise<void> {
         const notifyRoom = this.resolveNotify(job);
         if (!notifyRoom) return;
 
@@ -218,7 +220,7 @@ export class Daemon {
         }
     }
 
-    private resolveNotify(job: any): string | null {
+    private resolveNotify(job: JobDefinition): string | null {
         if (job.notify === "none") return null;
         if (job.notify) return job.notify;
         return this.config.cron?.default_notify ?? null;

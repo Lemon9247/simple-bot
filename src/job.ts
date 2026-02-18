@@ -29,11 +29,17 @@ export function parseStep(raw: unknown): Step {
 
     if (raw && typeof raw === "object" && !Array.isArray(raw)) {
         const entries = Object.entries(raw);
-        if (entries.length === 1) {
-            const [key, value] = entries[0];
-            if (key === "model" && typeof value === "string") {
-                return { type: "model", model: value };
+        const keys = Object.keys(raw);
+
+        if (keys.includes("model")) {
+            const value = (raw as Record<string, unknown>).model;
+            if (typeof value !== "string") {
+                throw new Error(`Step 'model' value must be a string, got ${typeof value}`);
             }
+            if (keys.length > 1) {
+                throw new Error(`Step 'model' has unexpected extra keys: ${keys.filter((k) => k !== "model").join(", ")}`);
+            }
+            return { type: "model", model: value };
         }
     }
 
@@ -44,7 +50,13 @@ export function parseSteps(raw: unknown): Step[] {
     if (!Array.isArray(raw)) {
         throw new Error("steps must be an array");
     }
-    return raw.map(parseStep);
+    return raw.map((step, i) => {
+        try {
+            return parseStep(step);
+        } catch (err) {
+            throw new Error(`step[${i}]: ${(err as Error).message}`);
+        }
+    });
 }
 
 export async function parseJobFile(filePath: string): Promise<JobDefinition> {
@@ -93,6 +105,9 @@ export function parseJobContent(content: string, filePath: string): JobDefinitio
         }
     }
 
+    if (data.enabled !== undefined && typeof data.enabled !== "boolean") {
+        throw new JobParseError(filePath, "enabled must be a boolean");
+    }
     const enabled = data.enabled !== false;
 
     return { name, file: filePath, schedule: data.schedule, steps, notify, enabled, body: body.trim() };
