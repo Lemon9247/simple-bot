@@ -33,6 +33,23 @@ Matrix message → `follow_up` → pi responds → daemon posts to originating r
 
 The agent doesn't know it's talking to Matrix. It just receives prompts and does work.
 
+## File & Attachment Support
+
+### Inbound (Discord → Agent)
+
+Users can attach files to Discord messages. The daemon:
+- **Images** (`image/*`): base64-encoded and sent to pi's vision via the RPC `images` field
+- **Other files** (audio, documents, etc.): saved to `/tmp/wren-inbox/` and the path is appended to the prompt. Cleaned up after 1 hour.
+- Attachments over 25MB are skipped.
+
+### Outbound (Agent → Discord)
+
+The agent has an `attach` tool (registered by a pi extension baked into the Docker image at `/app/extensions/attach.ts`). Calling `attach({ path: "/path/to/file" })` queues the file to be sent as a Discord attachment with the response.
+
+### Custom Emotes
+
+The Discord listener builds an emoji cache from all guilds on connect. In outgoing messages, `:emote_name:` patterns are replaced with Discord's `<:name:id>` format if the name matches a guild emoji. Standard emoji names are left alone.
+
 ## Deployment
 
 Copy the example files and edit to taste:
