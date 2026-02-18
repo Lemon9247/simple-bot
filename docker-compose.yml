@@ -6,7 +6,8 @@ services:
         cap_add:
             - NET_ADMIN  # for iptables LAN blocking in entrypoint
         networks:
-            - isolated
+            isolated:
+            shared-services:
         volumes:
             - ./config.yaml:/config/config.yaml:ro
             - ../home:/home/wren           # Wren's persistent home directory
@@ -19,3 +20,5 @@ services:
 networks:
     isolated:
         driver: bridge
+    shared-services:
+        external: true

@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# Allow access to specific LAN services before the blanket block.
+iptables -A OUTPUT -d 172.30.0.10 -j ACCEPT  # SearXNG
+
 # Block access to private/LAN networks (RFC1918 + link-local).
 # Public internet (HTTP/HTTPS, SSH, DNS, etc.) remains fully accessible.
 iptables -A OUTPUT -d 10.0.0.0/8 -j DROP
