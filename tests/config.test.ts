@@ -104,18 +104,32 @@ pi:
 security:
     allowed_users:
         - "@willow:athena"
-heartbeat:
-    enabled: true
-    interval: 4h
-    active_hours: "08:00-23:00"
-    checklist: ~/HEARTBEAT.md
-    notify_room: "#hades:athena"
+cron:
+    dir: /home/test/cron.d
+    default_notify: "#hades:athena"
 `
         );
 
         const config = loadConfig(tmpFile("config.yaml"));
         expect(config.pi.command).toBe("/usr/local/bin/pi");
-        expect(config.heartbeat?.enabled).toBe(true);
-        expect(config.heartbeat?.interval).toBe("4h");
+        expect(config.cron?.dir).toBe("/home/test/cron.d");
+        expect(config.cron?.default_notify).toBe("#hades:athena");
+    });
+
+    it("validates cron.dir is required when cron is present", () => {
+        writeFileSync(
+            tmpFile("config.yaml"),
+            `
+pi:
+    cwd: /home/test
+security:
+    allowed_users:
+        - "@willow:athena"
+cron:
+    default_notify: "#hades:athena"
+`
+        );
+
+        expect(() => loadConfig(tmpFile("config.yaml"))).toThrow("cron.dir is required");
     });
 });
