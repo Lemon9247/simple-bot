@@ -180,6 +180,7 @@ export class Daemon {
 
         // Accumulate files from the `attach` tool during this response
         const pendingFiles: OutgoingFile[] = [];
+        const pendingReads: Promise<void>[] = [];
 
         try {
             const response = await this.bridge.sendMessage(promptText, {
@@ -195,7 +196,9 @@ export class Daemon {
                     if (info.toolName === "attach" && !info.isError) {
                         const filePath = info.args?.path;
                         if (typeof filePath === "string") {
-                            this.queueAttachFile(filePath, info.args?.filename, pendingFiles);
+                            pendingReads.push(
+                                this.queueAttachFile(filePath, info.args?.filename, pendingFiles),
+                            );
                         }
                     }
                 },
@@ -208,6 +211,9 @@ export class Daemon {
             });
 
             if (!response) return;
+
+            // Wait for any pending file reads before sending
+            await Promise.all(pendingReads);
 
             if (listener) {
                 await listener.send(origin, response, pendingFiles.length > 0 ? pendingFiles : undefined);
@@ -290,21 +296,20 @@ export class Daemon {
         return { images, fileLines };
     }
 
-    private queueAttachFile(
+    private async queueAttachFile(
         filePath: string,
         filename: string | undefined,
         pendingFiles: OutgoingFile[],
-    ): void {
-        readFile(filePath)
-            .then((data) => {
-                pendingFiles.push({
-                    data,
-                    filename: filename ?? basename(filePath),
-                });
-            })
-            .catch((err) => {
-                logger.error("Failed to read attach file", { path: filePath, error: String(err) });
+    ): Promise<void> {
+        try {
+            const data = await readFile(filePath);
+            pendingFiles.push({
+                data,
+                filename: filename ?? basename(filePath),
             });
+        } catch (err) {
+            logger.error("Failed to read attach file", { path: filePath, error: String(err) });
+        }
     }
 
     private isRateLimited(sender: string): boolean {
