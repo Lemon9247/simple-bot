@@ -77,7 +77,9 @@ describe("Heartbeat", () => {
         await scheduleCb!();
 
         expect(readFile).toHaveBeenCalledWith("/path/to/HEARTBEAT.md", "utf-8");
-        expect(mockBridge.sendMessage).toHaveBeenCalledWith(checklistContent);
+        expect(mockBridge.sendMessage).toHaveBeenCalledWith(
+            `[HEARTBEAT] Scheduled wake-up. Execute the following checklist:\n\n${checklistContent}`,
+        );
     });
 
     it("emits response event when bridge returns non-empty response", async () => {

@@ -41,7 +41,8 @@ export class Heartbeat extends EventEmitter {
     private async tick(): Promise<void> {
         try {
             const content = await readFile(this.config.checklist, "utf-8");
-            const response = await this.bridge.sendMessage(content);
+            const message = `[HEARTBEAT] Scheduled wake-up. Execute the following checklist:\n\n${content}`;
+            const response = await this.bridge.sendMessage(message);
 
             if (response && response.trim()) {
                 this.emit("response", response);
