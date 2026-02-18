@@ -43,8 +43,7 @@ export interface Config {
     };
     heartbeat?: {
         enabled: boolean;
-        interval: string;
-        active_hours: string;
+        schedule: string;
         checklist: string;
         notify_room: string;
     };

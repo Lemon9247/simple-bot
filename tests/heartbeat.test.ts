@@ -1,121 +1,68 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { Heartbeat, parseInterval, isWithinActiveHours } from "../src/heartbeat.js";
-import { EventEmitter } from "node:events";
+import { Heartbeat } from "../src/heartbeat.js";
 import { readFile } from "node:fs/promises";
+import cron from "node-cron";
 
 vi.mock("node:fs/promises");
+vi.mock("node-cron");
 
 describe("Heartbeat", () => {
+    let scheduleCb: (() => void) | null;
+    let mockTask: { stop: ReturnType<typeof vi.fn> };
+
     beforeEach(() => {
-        vi.useFakeTimers();
+        vi.clearAllMocks();
+        scheduleCb = null;
+        mockTask = { stop: vi.fn() };
+
+        vi.mocked(cron.validate).mockReturnValue(true);
+        vi.mocked(cron.schedule).mockImplementation((_, cb) => {
+            scheduleCb = cb as () => void;
+            return mockTask as any;
+        });
     });
 
     afterEach(() => {
         vi.restoreAllMocks();
-        vi.useRealTimers();
     });
 
-    it("starts and fires timer at correct interval", async () => {
-        const mockBridge = {
-            sendMessage: vi.fn().mockResolvedValue(""),
-        } as any;
+    it("validates cron expression on construction", () => {
+        vi.mocked(cron.validate).mockReturnValue(false);
 
+        const mockBridge = { sendMessage: vi.fn() } as any;
         const config = {
             enabled: true,
-            interval: "30m",
-            active_hours: "00:00-23:59",
+            schedule: "bad expression",
             checklist: "/tmp/test.md",
             notify_room: "#test:server",
         };
 
-        vi.mocked(readFile).mockResolvedValue("test checklist content");
-
-        const heartbeat = new Heartbeat(config, mockBridge);
-        heartbeat.start();
-
-        // Should not fire immediately
-        expect(mockBridge.sendMessage).not.toHaveBeenCalled();
-
-        // Advance 30 minutes
-        await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
-
-        expect(mockBridge.sendMessage).toHaveBeenCalledWith("test checklist content");
-        expect(mockBridge.sendMessage).toHaveBeenCalledTimes(1);
-
-        // Advance another 30 minutes
-        await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
-
-        expect(mockBridge.sendMessage).toHaveBeenCalledTimes(2);
-
-        heartbeat.stop();
+        expect(() => new Heartbeat(config, mockBridge)).toThrow("Invalid cron schedule");
     });
 
-    it("respects active hours - sends during active hours", async () => {
-        const mockBridge = {
-            sendMessage: vi.fn().mockResolvedValue(""),
-        } as any;
-
+    it("schedules cron task on start", () => {
+        const mockBridge = { sendMessage: vi.fn() } as any;
         const config = {
             enabled: true,
-            interval: "1h",
-            active_hours: "09:00-17:00",
+            schedule: "*/10 * * * *",
             checklist: "/tmp/test.md",
             notify_room: "#test:server",
         };
 
-        vi.mocked(readFile).mockResolvedValue("test content");
-
-        // Set time to 12:00 (within active hours)
-        vi.setSystemTime(new Date("2026-02-16T12:00:00"));
-
         const heartbeat = new Heartbeat(config, mockBridge);
         heartbeat.start();
 
-        await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
-
-        expect(mockBridge.sendMessage).toHaveBeenCalledWith("test content");
-
-        heartbeat.stop();
+        expect(cron.schedule).toHaveBeenCalledWith("*/10 * * * *", expect.any(Function));
     });
 
-    it("respects active hours - skips outside active hours", async () => {
+    it("reads checklist and sends to bridge when cron fires", async () => {
         const mockBridge = {
             sendMessage: vi.fn().mockResolvedValue(""),
         } as any;
 
         const config = {
             enabled: true,
-            interval: "1h",
-            active_hours: "09:00-17:00",
-            checklist: "/tmp/test.md",
-            notify_room: "#test:server",
-        };
-
-        vi.mocked(readFile).mockResolvedValue("test content");
-
-        // Set time to 22:00 (outside active hours)
-        vi.setSystemTime(new Date("2026-02-16T22:00:00"));
-
-        const heartbeat = new Heartbeat(config, mockBridge);
-        heartbeat.start();
-
-        await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
-
-        // Should not have sent message
-        expect(mockBridge.sendMessage).not.toHaveBeenCalled();
-
-        heartbeat.stop();
-    });
-
-    it("reads checklist file and sends contents", async () => {
-        const mockBridge = {
-            sendMessage: vi.fn().mockResolvedValue(""),
-        } as any;
-
-        const config = {
-            enabled: true,
-            interval: "1h",
-            active_hours: "00:00-23:59",
+            schedule: "0 7 * * *",
             checklist: "/path/to/HEARTBEAT.md",
             notify_room: "#test:server",
         };
@@ -126,12 +73,11 @@ describe("Heartbeat", () => {
         const heartbeat = new Heartbeat(config, mockBridge);
         heartbeat.start();
 
-        await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+        // Simulate cron firing
+        await scheduleCb!();
 
         expect(readFile).toHaveBeenCalledWith("/path/to/HEARTBEAT.md", "utf-8");
         expect(mockBridge.sendMessage).toHaveBeenCalledWith(checklistContent);
-
-        heartbeat.stop();
     });
 
     it("emits response event when bridge returns non-empty response", async () => {
@@ -141,8 +87,7 @@ describe("Heartbeat", () => {
 
         const config = {
             enabled: true,
-            interval: "1h",
-            active_hours: "00:00-23:59",
+            schedule: "0 7 * * *",
             checklist: "/tmp/test.md",
             notify_room: "#test:server",
         };
@@ -150,17 +95,13 @@ describe("Heartbeat", () => {
         vi.mocked(readFile).mockResolvedValue("test content");
 
         const heartbeat = new Heartbeat(config, mockBridge);
-        
         const responseHandler = vi.fn();
         heartbeat.on("response", responseHandler);
-
         heartbeat.start();
 
-        await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+        await scheduleCb!();
 
         expect(responseHandler).toHaveBeenCalledWith("Pi has something to say!");
-
-        heartbeat.stop();
     });
 
     it("does not emit response event when bridge returns empty response", async () => {
@@ -170,8 +111,7 @@ describe("Heartbeat", () => {
 
         const config = {
             enabled: true,
-            interval: "1h",
-            active_hours: "00:00-23:59",
+            schedule: "0 7 * * *",
             checklist: "/tmp/test.md",
             notify_room: "#test:server",
         };
@@ -179,120 +119,44 @@ describe("Heartbeat", () => {
         vi.mocked(readFile).mockResolvedValue("test content");
 
         const heartbeat = new Heartbeat(config, mockBridge);
-        
         const responseHandler = vi.fn();
         heartbeat.on("response", responseHandler);
-
         heartbeat.start();
 
-        await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+        await scheduleCb!();
 
         expect(responseHandler).not.toHaveBeenCalled();
-
-        heartbeat.stop();
     });
 
-    it("stops timer when stop() is called", async () => {
-        const mockBridge = {
-            sendMessage: vi.fn().mockResolvedValue(""),
-        } as any;
-
+    it("stops cron task when stop() is called", () => {
+        const mockBridge = { sendMessage: vi.fn() } as any;
         const config = {
             enabled: true,
-            interval: "1h",
-            active_hours: "00:00-23:59",
+            schedule: "0 7 * * *",
             checklist: "/tmp/test.md",
             notify_room: "#test:server",
         };
 
-        vi.mocked(readFile).mockResolvedValue("test content");
+        const heartbeat = new Heartbeat(config, mockBridge);
+        heartbeat.start();
+        heartbeat.stop();
+
+        expect(mockTask.stop).toHaveBeenCalled();
+    });
+
+    it("does not start twice", () => {
+        const mockBridge = { sendMessage: vi.fn() } as any;
+        const config = {
+            enabled: true,
+            schedule: "0 7 * * *",
+            checklist: "/tmp/test.md",
+            notify_room: "#test:server",
+        };
 
         const heartbeat = new Heartbeat(config, mockBridge);
         heartbeat.start();
+        heartbeat.start();
 
-        await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
-        expect(mockBridge.sendMessage).toHaveBeenCalledTimes(1);
-
-        heartbeat.stop();
-
-        // Advance more time - should not fire again
-        await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
-        expect(mockBridge.sendMessage).toHaveBeenCalledTimes(1);
-    });
-});
-
-describe("parseInterval", () => {
-    it("parses hours correctly", () => {
-        expect(parseInterval("4h")).toBe(4 * 60 * 60 * 1000);
-        expect(parseInterval("1h")).toBe(60 * 60 * 1000);
-        expect(parseInterval("24h")).toBe(24 * 60 * 60 * 1000);
-    });
-
-    it("parses minutes correctly", () => {
-        expect(parseInterval("30m")).toBe(30 * 60 * 1000);
-        expect(parseInterval("1m")).toBe(60 * 1000);
-        expect(parseInterval("90m")).toBe(90 * 60 * 1000);
-    });
-
-    it("parses combined hours and minutes", () => {
-        expect(parseInterval("1h30m")).toBe(90 * 60 * 1000);
-        expect(parseInterval("2h15m")).toBe(135 * 60 * 1000);
-    });
-
-    it("throws error on invalid format", () => {
-        expect(() => parseInterval("invalid")).toThrow("Invalid interval format");
-        expect(() => parseInterval("")).toThrow("Invalid interval format");
-        expect(() => parseInterval("4")).toThrow("Invalid interval format");
-    });
-});
-
-describe("isWithinActiveHours", () => {
-    beforeEach(() => {
-        vi.useFakeTimers();
-    });
-
-    afterEach(() => {
-        vi.useRealTimers();
-    });
-
-    it("returns true when time is within active hours", () => {
-        // Set time to 12:00
-        vi.setSystemTime(new Date("2026-02-16T12:00:00"));
-        expect(isWithinActiveHours("08:00-23:00")).toBe(true);
-    });
-
-    it("returns false when time is before active hours", () => {
-        // Set time to 06:00
-        vi.setSystemTime(new Date("2026-02-16T06:00:00"));
-        expect(isWithinActiveHours("08:00-23:00")).toBe(false);
-    });
-
-    it("returns false when time is after active hours", () => {
-        // Set time to 23:30
-        vi.setSystemTime(new Date("2026-02-16T23:30:00"));
-        expect(isWithinActiveHours("08:00-23:00")).toBe(false);
-    });
-
-    it("returns true when time is exactly at start of active hours", () => {
-        // Set time to 08:00
-        vi.setSystemTime(new Date("2026-02-16T08:00:00"));
-        expect(isWithinActiveHours("08:00-23:00")).toBe(true);
-    });
-
-    it("returns true when time is exactly at end of active hours", () => {
-        // Set time to 23:00
-        vi.setSystemTime(new Date("2026-02-16T23:00:00"));
-        expect(isWithinActiveHours("08:00-23:00")).toBe(true);
-    });
-
-    it("handles edge case of all-day active hours", () => {
-        // Set time to 03:00
-        vi.setSystemTime(new Date("2026-02-16T03:00:00"));
-        expect(isWithinActiveHours("00:00-23:59")).toBe(true);
-    });
-
-    it("throws error on invalid format", () => {
-        expect(() => isWithinActiveHours("invalid")).toThrow("Invalid active_hours format");
-        expect(() => isWithinActiveHours("08:00")).toThrow("Invalid active_hours format");
+        expect(cron.schedule).toHaveBeenCalledTimes(1);
     });
 });
