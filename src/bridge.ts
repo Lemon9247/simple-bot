@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
-import type { ToolCallInfo } from "./types.js";
+import type { ToolCallInfo, ToolEndInfo } from "./types.js";
 import * as logger from "./logger.js";
 
 export interface BridgeOptions {
@@ -11,15 +11,24 @@ export interface BridgeOptions {
     spawnFn?: typeof spawn;
 }
 
+export interface ImageContent {
+    type: "image";
+    data: string;
+    mimeType: string;
+}
+
 export interface SendOptions {
     onToolStart?: (info: ToolCallInfo) => void;
+    onToolEnd?: (info: ToolEndInfo) => void;
     onText?: (text: string) => void;
+    images?: ImageContent[];
 }
 
 interface Pending {
     resolve: (data: any) => void;
     reject: (err: Error) => void;
     onToolStart?: (info: ToolCallInfo) => void;
+    onToolEnd?: (info: ToolEndInfo) => void;
     onText?: (text: string) => void;
 }
 
@@ -68,13 +77,21 @@ export class Bridge extends EventEmitter {
             const entry: Pending = {
                 resolve, reject,
                 onToolStart: options?.onToolStart,
+                onToolEnd: options?.onToolEnd,
                 onText: options?.onText,
             };
             this.responseQueue.push(entry);
             // Use prompt with followUp streaming behavior:
             // - if pi is idle: starts processing immediately
             // - if pi is busy: queues for after current turn
-            this.rpc("prompt", { message: text, streamingBehavior: "followUp" }).catch((err) => {
+            const rpcParams: Record<string, unknown> = {
+                message: text,
+                streamingBehavior: "followUp",
+            };
+            if (options?.images && options.images.length > 0) {
+                rpcParams.images = options.images;
+            }
+            this.rpc("prompt", rpcParams).catch((err) => {
                 const idx = this.responseQueue.indexOf(entry);
                 if (idx >= 0) this.responseQueue.splice(idx, 1);
                 reject(err);
@@ -180,6 +197,19 @@ export class Bridge extends EventEmitter {
                         args: event.args ?? {},
                     });
                 }
+            }
+        }
+
+        // Tool execution ended — notify for outbound file handling
+        if (event.type === "tool_execution_end") {
+            const current = this.responseQueue[0];
+            if (current?.onToolEnd) {
+                current.onToolEnd({
+                    toolName: event.toolName,
+                    toolCallId: event.toolCallId ?? "",
+                    args: event.args ?? {},
+                    isError: event.isError ?? false,
+                });
             }
         }
 

@@ -1,8 +1,23 @@
+export interface Attachment {
+    url: string;
+    filename: string;
+    contentType: string;
+    size: number;
+    data?: Buffer;
+    base64?: string;
+}
+
+export interface OutgoingFile {
+    data: Buffer;
+    filename: string;
+}
+
 export interface IncomingMessage {
     platform: string;
     channel: string;
     sender: string;
     text: string;
+    attachments?: Attachment[];
 }
 
 export interface MessageOrigin {
@@ -15,7 +30,7 @@ export interface Listener {
     connect(): Promise<void>;
     disconnect(): Promise<void>;
     onMessage(handler: (msg: IncomingMessage) => void): void;
-    send(origin: MessageOrigin, text: string): Promise<void>;
+    send(origin: MessageOrigin, text: string, files?: OutgoingFile[]): Promise<void>;
 }
 
 export interface ToolCallInfo {
@@ -23,11 +38,19 @@ export interface ToolCallInfo {
     args: Record<string, any>;
 }
 
+export interface ToolEndInfo {
+    toolName: string;
+    toolCallId: string;
+    args: Record<string, any>;
+    isError: boolean;
+}
+
 export interface Config {
     pi: {
         cwd: string;
         command?: string;
         args?: string[];
+        extensions?: string[];
     };
     security: {
         allowed_users: string[];

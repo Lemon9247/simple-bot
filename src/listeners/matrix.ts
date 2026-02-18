@@ -1,5 +1,5 @@
 import { MatrixClient, SimpleFsStorageProvider } from "matrix-bot-sdk";
-import type { Listener, IncomingMessage, MessageOrigin } from "../types.js";
+import type { Listener, IncomingMessage, MessageOrigin, OutgoingFile } from "../types.js";
 
 export class MatrixListener implements Listener {
     readonly name = "matrix";
@@ -45,7 +45,8 @@ export class MatrixListener implements Listener {
         this.messageHandler = handler;
     }
 
-    async send(origin: MessageOrigin, text: string): Promise<void> {
+    async send(origin: MessageOrigin, text: string, _files?: OutgoingFile[]): Promise<void> {
+        // TODO: Matrix file upload support (future work)
         await this.client.sendText(origin.channel, text);
     }
 }

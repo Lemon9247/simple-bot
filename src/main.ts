@@ -7,10 +7,18 @@ import * as logger from "./logger.js";
 const configPath = process.argv[2] ?? "config.yaml";
 const config = loadConfig(configPath);
 
+// Build pi args, injecting extension flags
+const piArgs = config.pi.args ?? ["--mode", "rpc", "--continue"];
+if (config.pi.extensions) {
+    for (const ext of config.pi.extensions) {
+        piArgs.push("-e", ext);
+    }
+}
+
 const bridge = new Bridge({
     cwd: config.pi.cwd,
     command: config.pi.command,
-    args: config.pi.args,
+    args: piArgs,
 });
 
 const scheduler = config.cron

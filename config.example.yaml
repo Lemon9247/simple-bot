@@ -1,5 +1,8 @@
 pi:
     cwd: /pi-cwd
+    # extensions baked into the Docker image:
+    extensions:
+        - /app/extensions/attach.ts
 
 # Uncomment the platform(s) you want:
 

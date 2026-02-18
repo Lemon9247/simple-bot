@@ -15,6 +15,7 @@ vi.mock("discord.js", () => ({
             (this as any).login = mockLogin;
             (this as any).destroy = mockDestroy;
             (this as any).channels = { fetch: mockFetch };
+            (this as any).guilds = { cache: new Map() };
         }
     },
     Intents: {
@@ -23,7 +24,16 @@ vi.mock("discord.js", () => ({
             GUILD_MESSAGES: 2,
             MESSAGE_CONTENT: 4,
             DIRECT_MESSAGES: 8,
+            GUILD_EMOJIS_AND_STICKERS: 16,
         },
+    },
+    MessageAttachment: class MockMessageAttachment {
+        attachment: any;
+        name: string | null;
+        constructor(attachment: any, name?: string) {
+            this.attachment = attachment;
+            this.name = name ?? null;
+        }
     },
 }));
 
@@ -77,10 +87,11 @@ describe("DiscordListener", () => {
         await connectListener(listener);
 
         const handler = mockOn.mock.calls.find((c) => c[0] === "messageCreate")?.[1];
-        handler({
+        await handler({
             author: { bot: false, username: "willow" },
             channelId: "12345",
             content: "hello hades",
+            attachments: new Map(),
         });
 
         expect(received).toHaveLength(1);
@@ -98,10 +109,11 @@ describe("DiscordListener", () => {
         await connectListener(listener);
 
         const handler = mockOn.mock.calls.find((c) => c[0] === "messageCreate")?.[1];
-        handler({
+        await handler({
             author: { bot: true, username: "otherbot" },
             channelId: "12345",
             content: "beep boop",
+            attachments: new Map(),
         });
 
         expect(received).toHaveLength(0);
@@ -113,10 +125,11 @@ describe("DiscordListener", () => {
         await connectListener(listener);
 
         const handler = mockOn.mock.calls.find((c) => c[0] === "messageCreate")?.[1];
-        handler({
+        await handler({
             author: { bot: false, username: "stranger" },
             channelId: "12345",
             content: "hey",
+            attachments: new Map(),
         });
 
         expect(received).toHaveLength(1);

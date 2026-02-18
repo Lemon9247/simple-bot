@@ -1,8 +1,12 @@
+import { readFile } from "node:fs/promises";
+import { basename } from "node:path";
 import { Bridge } from "./bridge.js";
+import type { ImageContent } from "./bridge.js";
 import { commandMap } from "./commands.js";
-import type { Config, Listener, IncomingMessage, MessageOrigin, ToolCallInfo, JobDefinition } from "./types.js";
+import type { Config, Listener, IncomingMessage, MessageOrigin, ToolCallInfo, ToolEndInfo, JobDefinition, OutgoingFile, Attachment } from "./types.js";
 import type { Scheduler } from "./scheduler.js";
 import * as logger from "./logger.js";
+import { cleanupInbox, saveToInbox } from "./inbox.js";
 
 const MAX_MESSAGE_LENGTH = 4000;
 const RATE_WINDOW_MS = 60_000;
@@ -151,7 +155,13 @@ export class Daemon {
             return;
         }
 
-        const formatted = `[${msg.platform} ${msg.channel}] ${msg.sender}: ${msg.text}`;
+        // Process attachments: images → base64 for pi, others → inbox paths
+        const { images, fileLines } = await this.processAttachments(msg.attachments);
+
+        let promptText = `[${msg.platform} ${msg.channel}] ${msg.sender}: ${msg.text}`;
+        if (fileLines.length > 0) {
+            promptText += "\n" + fileLines.join("\n");
+        }
 
         // If a command is running (e.g. compact), don't send prompts —
         // pi may drop them or leave the response queue dangling.
@@ -164,18 +174,30 @@ export class Daemon {
         // If the agent is mid-chain, steer instead of queuing a new prompt
         if (this.bridge.busy) {
             logger.info("Steering active agent", { sender: msg.sender });
-            this.bridge.steer(formatted);
+            this.bridge.steer(promptText);
             return;
         }
 
+        // Accumulate files from the `attach` tool during this response
+        const pendingFiles: OutgoingFile[] = [];
+
         try {
-            const response = await this.bridge.sendMessage(formatted, {
+            const response = await this.bridge.sendMessage(promptText, {
+                images: images.length > 0 ? images : undefined,
                 onToolStart: (info) => {
                     if (!listener) return;
                     const summary = formatToolCall(info);
                     listener.send(origin, summary).catch((err) => {
                         logger.error("Failed to send tool update", { error: String(err) });
                     });
+                },
+                onToolEnd: (info: ToolEndInfo) => {
+                    if (info.toolName === "attach" && !info.isError) {
+                        const filePath = info.args?.path;
+                        if (typeof filePath === "string") {
+                            this.queueAttachFile(filePath, info.args?.filename, pendingFiles);
+                        }
+                    }
                 },
                 onText: (text) => {
                     if (!listener) return;
@@ -188,7 +210,7 @@ export class Daemon {
             if (!response) return;
 
             if (listener) {
-                await listener.send(origin, response);
+                await listener.send(origin, response, pendingFiles.length > 0 ? pendingFiles : undefined);
             }
         } catch (err) {
             logger.error("Failed to process message", { error: String(err) });
@@ -233,6 +255,56 @@ export class Daemon {
             return ["discord", roomId];
         }
         return [null, null];
+    }
+
+    private async processAttachments(
+        attachments?: Attachment[],
+    ): Promise<{ images: ImageContent[]; fileLines: string[] }> {
+        const images: ImageContent[] = [];
+        const fileLines: string[] = [];
+
+        if (!attachments || attachments.length === 0) {
+            return { images, fileLines };
+        }
+
+        // Clean up old inbox files (non-blocking)
+        cleanupInbox().catch((err) => {
+            logger.error("Inbox cleanup failed", { error: String(err) });
+        });
+
+        for (const att of attachments) {
+            if (att.base64 && att.contentType.startsWith("image/")) {
+                images.push({
+                    type: "image",
+                    data: att.base64,
+                    mimeType: att.contentType,
+                });
+            } else if (att.data) {
+                const saved = await saveToInbox(att.filename, att.data);
+                if (saved) {
+                    fileLines.push(`[Attached file: ${saved} (${att.contentType}, ${att.size} bytes)]`);
+                }
+            }
+        }
+
+        return { images, fileLines };
+    }
+
+    private queueAttachFile(
+        filePath: string,
+        filename: string | undefined,
+        pendingFiles: OutgoingFile[],
+    ): void {
+        readFile(filePath)
+            .then((data) => {
+                pendingFiles.push({
+                    data,
+                    filename: filename ?? basename(filePath),
+                });
+            })
+            .catch((err) => {
+                logger.error("Failed to read attach file", { path: filePath, error: String(err) });
+            });
     }
 
     private isRateLimited(sender: string): boolean {
