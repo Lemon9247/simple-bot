@@ -110,5 +110,13 @@ export function parseJobContent(content: string, filePath: string): JobDefinitio
     }
     const enabled = data.enabled !== false;
 
-    return { name, file: filePath, schedule: data.schedule, steps, notify, enabled, body: body.trim() };
+    let gracePeriodMs: number | undefined;
+    if (data.gracePeriodMs !== undefined) {
+        if (typeof data.gracePeriodMs !== "number" || data.gracePeriodMs < 0) {
+            throw new JobParseError(filePath, "gracePeriodMs must be a non-negative number");
+        }
+        gracePeriodMs = data.gracePeriodMs;
+    }
+
+    return { name, file: filePath, schedule: data.schedule, steps, notify, enabled, gracePeriodMs, body: body.trim() };
 }

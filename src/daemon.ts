@@ -44,6 +44,7 @@ export class Daemon {
     private stopping = false;
     private commandRunning = false;
     private rateLimits = new Map<string, number[]>();
+    private lastUserInteractionTime = 0;
 
     constructor(config: Config, bridge?: Bridge, scheduler?: Scheduler) {
         this.config = config;
@@ -52,6 +53,14 @@ export class Daemon {
             command: config.pi.command,
             args: config.pi.args,
         });
+        this.scheduler = scheduler;
+    }
+
+    getLastUserInteractionTime(): number {
+        return this.lastUserInteractionTime;
+    }
+
+    setScheduler(scheduler: Scheduler): void {
         this.scheduler = scheduler;
     }
 
@@ -124,6 +133,8 @@ export class Daemon {
             logger.warn("Rate limited user", { sender: msg.sender });
             return;
         }
+
+        this.lastUserInteractionTime = Date.now();
 
         const origin: MessageOrigin = {
             platform: msg.platform,

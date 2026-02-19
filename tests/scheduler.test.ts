@@ -491,6 +491,151 @@ steps:
         scheduler.stop();
     });
 
+    describe("user interaction grace period", () => {
+        it("skips job when user interacted within grace period", async () => {
+            await writeJob("test", `---
+schedule: "0 7 * * *"
+steps:
+  - compact
+---`);
+
+            const bridge = makeBridge();
+            // User interacted 1 second ago
+            const getUserInteractionTime = vi.fn().mockReturnValue(Date.now() - 1000);
+            const scheduler = new Scheduler({ dir: cronDir }, bridge, getUserInteractionTime);
+            await scheduler.start();
+
+            await getLastScheduledCallback()!();
+
+            expect(bridge.command).not.toHaveBeenCalled();
+
+            scheduler.stop();
+        });
+
+        it("runs job when grace period has elapsed", async () => {
+            await writeJob("test", `---
+schedule: "0 7 * * *"
+steps:
+  - compact
+---`);
+
+            const bridge = makeBridge();
+            // User interacted 10 seconds ago (default grace is 5s)
+            const getUserInteractionTime = vi.fn().mockReturnValue(Date.now() - 10000);
+            const scheduler = new Scheduler({ dir: cronDir }, bridge, getUserInteractionTime);
+            await scheduler.start();
+
+            await getLastScheduledCallback()!();
+
+            expect(bridge.command).toHaveBeenCalledWith("compact");
+
+            scheduler.stop();
+        });
+
+        it("respects per-job gracePeriodMs override", async () => {
+            await writeJob("test", `---
+schedule: "0 7 * * *"
+gracePeriodMs: 2000
+steps:
+  - compact
+---`);
+
+            const bridge = makeBridge();
+            // User interacted 3 seconds ago — outside per-job 2s grace, within default 5s
+            const getUserInteractionTime = vi.fn().mockReturnValue(Date.now() - 3000);
+            const scheduler = new Scheduler({ dir: cronDir }, bridge, getUserInteractionTime);
+            await scheduler.start();
+
+            await getLastScheduledCallback()!();
+
+            expect(bridge.command).toHaveBeenCalledWith("compact");
+
+            scheduler.stop();
+        });
+
+        it("respects global gracePeriodMs from config", async () => {
+            await writeJob("test", `---
+schedule: "0 7 * * *"
+steps:
+  - compact
+---`);
+
+            const bridge = makeBridge();
+            // User interacted 8 seconds ago — outside custom global 7s grace
+            const getUserInteractionTime = vi.fn().mockReturnValue(Date.now() - 8000);
+            const config: CronConfig = { dir: cronDir, gracePeriodMs: 7000 };
+            const scheduler = new Scheduler(config, bridge, getUserInteractionTime);
+            await scheduler.start();
+
+            await getLastScheduledCallback()!();
+
+            expect(bridge.command).toHaveBeenCalledWith("compact");
+
+            scheduler.stop();
+        });
+
+        it("skips job when within global gracePeriodMs", async () => {
+            await writeJob("test", `---
+schedule: "0 7 * * *"
+steps:
+  - compact
+---`);
+
+            const bridge = makeBridge();
+            // User interacted 3 seconds ago — within custom global 7s grace
+            const getUserInteractionTime = vi.fn().mockReturnValue(Date.now() - 3000);
+            const config: CronConfig = { dir: cronDir, gracePeriodMs: 7000 };
+            const scheduler = new Scheduler(config, bridge, getUserInteractionTime);
+            await scheduler.start();
+
+            await getLastScheduledCallback()!();
+
+            expect(bridge.command).not.toHaveBeenCalled();
+
+            scheduler.stop();
+        });
+
+        it("gracePeriodMs: 0 disables grace period for that job", async () => {
+            await writeJob("test", `---
+schedule: "0 7 * * *"
+gracePeriodMs: 0
+steps:
+  - compact
+---`);
+
+            const bridge = makeBridge();
+            // User interacted just now — but job has grace period of 0
+            const getUserInteractionTime = vi.fn().mockReturnValue(Date.now());
+            const scheduler = new Scheduler({ dir: cronDir }, bridge, getUserInteractionTime);
+            await scheduler.start();
+
+            await getLastScheduledCallback()!();
+
+            expect(bridge.command).toHaveBeenCalledWith("compact");
+
+            scheduler.stop();
+        });
+
+        it("runs normally when no callback is provided", async () => {
+            await writeJob("test", `---
+schedule: "0 7 * * *"
+steps:
+  - compact
+---`);
+
+            const bridge = makeBridge();
+            // No getUserInteractionTime callback — grace period check skipped entirely
+            const scheduler = new Scheduler({ dir: cronDir }, bridge);
+            await scheduler.start();
+
+            await getLastScheduledCallback()!();
+
+            expect(bridge.command).toHaveBeenCalledWith("compact");
+
+            scheduler.stop();
+        });
+    });
+
     describe("hot reload", () => {
         it("picks up new job files", async () => {
             const bridge = makeBridge();

@@ -73,6 +73,7 @@ export interface Config {
 export interface CronConfig {
     dir: string;
     default_notify?: string;
+    gracePeriodMs?: number;
 }
 
 export type Step =
@@ -89,5 +90,6 @@ export interface JobDefinition {
     steps: Step[];
     notify: string | "none" | null;  // null = inherit default
     enabled: boolean;
+    gracePeriodMs?: number;  // per-job override; undefined = use global default
     body: string;
 }

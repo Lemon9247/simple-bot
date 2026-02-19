@@ -22,3 +22,4 @@ security:
 # cron:
 #     dir: /pi-cwd/cron.d
 #     default_notify: "#hades:athena"    # or Discord channel ID
+#     gracePeriodMs: 5000               # skip jobs if user message within last N ms (default: 5000)

@@ -218,4 +218,56 @@ steps:
 ---`;
         expect(parseJobContent(content, "/some/path/my-job.md").name).toBe("my-job");
     });
+
+    it("parses gracePeriodMs from frontmatter", () => {
+        const content = `---
+schedule: "0 7 * * *"
+gracePeriodMs: 10000
+steps:
+  - compact
+---`;
+        const job = parseJobContent(content, "/cron.d/test.md");
+        expect(job.gracePeriodMs).toBe(10000);
+    });
+
+    it("allows gracePeriodMs of 0", () => {
+        const content = `---
+schedule: "0 7 * * *"
+gracePeriodMs: 0
+steps:
+  - compact
+---`;
+        const job = parseJobContent(content, "/cron.d/test.md");
+        expect(job.gracePeriodMs).toBe(0);
+    });
+
+    it("defaults gracePeriodMs to undefined when omitted", () => {
+        const content = `---
+schedule: "0 7 * * *"
+steps:
+  - compact
+---`;
+        const job = parseJobContent(content, "/cron.d/test.md");
+        expect(job.gracePeriodMs).toBeUndefined();
+    });
+
+    it("rejects negative gracePeriodMs", () => {
+        const content = `---
+schedule: "0 7 * * *"
+gracePeriodMs: -1000
+steps:
+  - compact
+---`;
+        expect(() => parseJobContent(content, "test.md")).toThrow("gracePeriodMs must be a non-negative number");
+    });
+
+    it("rejects non-number gracePeriodMs", () => {
+        const content = `---
+schedule: "0 7 * * *"
+gracePeriodMs: "5000"
+steps:
+  - compact
+---`;
+        expect(() => parseJobContent(content, "test.md")).toThrow("gracePeriodMs must be a non-negative number");
+    });
 });

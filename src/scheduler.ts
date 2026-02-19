@@ -16,16 +16,18 @@ interface ActiveJob {
 export class Scheduler extends EventEmitter {
     private config: CronConfig;
     private bridge: Bridge;
+    private getUserInteractionTime: (() => number) | undefined;
     private jobs = new Map<string, ActiveJob>();
     private watcher: FSWatcher | null = null;
     private debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
     private executing = false;
     private activeExecution: Promise<void> | null = null;
 
-    constructor(config: CronConfig, bridge: Bridge) {
+    constructor(config: CronConfig, bridge: Bridge, getUserInteractionTime?: () => number) {
         super();
         this.config = config;
         this.bridge = bridge;
+        this.getUserInteractionTime = getUserInteractionTime;
     }
 
     async start(): Promise<void> {
@@ -113,6 +115,19 @@ export class Scheduler extends EventEmitter {
     }
 
     private async executeJob(job: JobDefinition): Promise<void> {
+        if (this.getUserInteractionTime) {
+            const elapsed = Date.now() - this.getUserInteractionTime();
+            const grace = job.gracePeriodMs ?? this.config.gracePeriodMs ?? 5000;
+            if (grace > 0 && elapsed < grace) {
+                logger.info("Skipping cron job, user interaction grace period", {
+                    name: job.name,
+                    elapsedMs: elapsed,
+                    gracePeriodMs: grace,
+                });
+                return;
+            }
+        }
+
         if (this.bridge.busy || this.executing) {
             logger.info("Skipping cron job, busy", { name: job.name });
             return;

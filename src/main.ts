@@ -21,11 +21,15 @@ const bridge = new Bridge({
     args: piArgs,
 });
 
+const daemon = new Daemon(config, bridge);
+
 const scheduler = config.cron
-    ? new Scheduler(config.cron, bridge)
+    ? new Scheduler(config.cron, bridge, () => daemon.getLastUserInteractionTime())
     : undefined;
 
-const daemon = new Daemon(config, bridge, scheduler);
+if (scheduler) {
+    daemon.setScheduler(scheduler);
+}
 
 // Wire up configured listeners
 if (config.matrix) {
