@@ -51,15 +51,22 @@ export const commands: Command[] = [
         name: "model",
         async execute({ args, bridge, reply }) {
             if (!args) {
-                const result = await bridge.command("get_available_models");
-                const models: any[] = result?.models ?? [];
+                const [modelsResult, stateResult] = await Promise.all([
+                    bridge.command("get_available_models"),
+                    bridge.command("get_state"),
+                ]);
+                const models: any[] = modelsResult?.models ?? [];
+                const current = stateResult?.model;
                 if (models.length === 0) {
                     await reply("No models available.");
                 } else {
+                    const currentLine = current
+                        ? `**Current model:** ${current.name} (\`${current.provider}/${current.id}\`)`
+                        : "**Current model:** unknown";
                     const list = models
                         .map((m: any) => `• \`${m.provider}/${m.id}\` — ${m.name}`)
                         .join("\n");
-                    await reply(`**Available models:**\n${list}\n\nUse \`bot!model <name>\` to switch.`);
+                    await reply(`${currentLine}\n\n**Available models:**\n${list}\n\nUse \`bot!model <name>\` to switch.`);
                 }
             } else {
                 const result = await bridge.command("get_available_models");

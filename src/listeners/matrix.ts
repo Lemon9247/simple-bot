@@ -45,6 +45,10 @@ export class MatrixListener implements Listener {
         this.messageHandler = handler;
     }
 
+    async sendTyping(origin: MessageOrigin): Promise<void> {
+        await this.client.setTyping(origin.channel, true, 15_000);
+    }
+
     async send(origin: MessageOrigin, text: string, _files?: OutgoingFile[]): Promise<void> {
         // TODO: Matrix file upload support (future work)
         await this.client.sendText(origin.channel, text);

@@ -119,6 +119,12 @@ export class DiscordListener implements Listener {
         this.messageHandler = handler;
     }
 
+    async sendTyping(origin: MessageOrigin): Promise<void> {
+        const channel = await this.client.channels.fetch(origin.channel);
+        if (!channel?.isText() || !("sendTyping" in channel)) return;
+        await (channel as any).sendTyping();
+    }
+
     async send(origin: MessageOrigin, text: string, files?: OutgoingFile[]): Promise<void> {
         const channel = await this.client.channels.fetch(origin.channel);
         if (!channel?.isText() || !("send" in channel)) return;

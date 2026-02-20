@@ -31,6 +31,7 @@ export interface Listener {
     disconnect(): Promise<void>;
     onMessage(handler: (msg: IncomingMessage) => void): void;
     send(origin: MessageOrigin, text: string, files?: OutgoingFile[]): Promise<void>;
+    sendTyping?(origin: MessageOrigin): Promise<void>;
 }
 
 export interface ToolCallInfo {

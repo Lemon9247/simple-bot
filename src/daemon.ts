@@ -190,6 +190,9 @@ export class Daemon {
             return;
         }
 
+        // Show typing indicator while the agent is working
+        const typingInterval = this.startTyping(listener, origin);
+
         // Accumulate files from the `attach` tool during this response
         const pendingFiles: OutgoingFile[] = [];
         const pendingReads: Promise<void>[] = [];
@@ -232,6 +235,8 @@ export class Daemon {
             }
         } catch (err) {
             logger.error("Failed to process message", { error: String(err) });
+        } finally {
+            clearInterval(typingInterval);
         }
     }
 
@@ -325,6 +330,16 @@ export class Daemon {
         } catch (err) {
             logger.error("Failed to read attach file", { path: filePath, error: String(err) });
         }
+    }
+
+    private startTyping(listener: Listener | undefined, origin: MessageOrigin): ReturnType<typeof setInterval> {
+        const send = () => {
+            listener?.sendTyping?.(origin).catch((err) => {
+                logger.error("Failed to send typing indicator", { error: String(err) });
+            });
+        };
+        send(); // fire immediately
+        return setInterval(send, 8_000); // refresh every 8s (Discord typing lasts ~10s)
     }
 
     private isRateLimited(sender: string): boolean {
