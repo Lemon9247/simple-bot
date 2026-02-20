@@ -1,6 +1,7 @@
 import { Client, Intents, MessageAttachment } from "discord.js";
 import type { Listener, IncomingMessage, MessageOrigin, Attachment, OutgoingFile } from "../types.js";
 import * as logger from "../logger.js";
+import { splitMessage } from "../chunking.js";
 
 const MAX_ATTACHMENT_SIZE = 25 * 1024 * 1024; // 25MB
 
@@ -130,15 +131,23 @@ export class DiscordListener implements Listener {
         if (!channel?.isText() || !("send" in channel)) return;
 
         const resolvedText = this.resolveEmotes(text);
+        const chunks = splitMessage(resolvedText);
 
         const discordFiles = files?.map(
             (f) => new MessageAttachment(f.data, f.filename),
         );
 
-        if (discordFiles && discordFiles.length > 0) {
-            await (channel as any).send({ content: resolvedText || undefined, files: discordFiles });
-        } else {
-            await (channel as any).send(resolvedText);
+        for (let i = 0; i < chunks.length; i++) {
+            const payload: any = { content: chunks[i] };
+            // Attach files to the first chunk only
+            if (i === 0 && discordFiles && discordFiles.length > 0) {
+                payload.files = discordFiles;
+            }
+            await (channel as any).send(payload);
+            // Small delay between chunks to avoid rate limiting
+            if (i < chunks.length - 1) {
+                await new Promise((r) => setTimeout(r, 250));
+            }
         }
     }
 

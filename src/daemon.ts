@@ -300,11 +300,23 @@ export class Daemon {
                 const compressed = att.data
                     ? await compressImage(att.data, att.contentType)
                     : null;
-                images.push({
-                    type: "image",
-                    data: compressed?.base64 ?? att.base64,
-                    mimeType: compressed?.mimeType ?? att.contentType,
-                });
+                if (compressed && !compressed.ok) {
+                    // Image couldn't be compressed — include as text warning
+                    fileLines.push(`[${compressed.reason}]`);
+                } else if (compressed && compressed.ok) {
+                    images.push({
+                        type: "image",
+                        data: compressed.base64,
+                        mimeType: compressed.mimeType,
+                    });
+                } else {
+                    // null = already fits, use original
+                    images.push({
+                        type: "image",
+                        data: att.base64,
+                        mimeType: att.contentType,
+                    });
+                }
             } else if (att.data) {
                 const saved = await saveToInbox(att.filename, att.data);
                 if (saved) {

@@ -145,6 +145,6 @@ describe("DiscordListener", () => {
         await listener.send({ platform: "discord", channel: "12345" }, "response text");
 
         expect(mockFetch).toHaveBeenCalledWith("12345");
-        expect(mockSend).toHaveBeenCalledWith("response text");
+        expect(mockSend).toHaveBeenCalledWith({ content: "response text" });
     });
 });
