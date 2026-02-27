@@ -5,6 +5,7 @@ import type { ImageContent } from "./bridge.js";
 import { commandMap } from "./commands.js";
 import type { Config, Listener, IncomingMessage, MessageOrigin, ToolCallInfo, ToolEndInfo, JobDefinition, OutgoingFile, Attachment } from "./types.js";
 import type { Scheduler } from "./scheduler.js";
+import { HttpServer } from "./server.js";
 import * as logger from "./logger.js";
 import { cleanupInbox, saveToInbox } from "./inbox.js";
 import { compressImage } from "./image.js";
@@ -41,6 +42,7 @@ export class Daemon {
     private bridge: Bridge;
     private listeners: Listener[] = [];
     private scheduler?: Scheduler;
+    private httpServer?: HttpServer;
     private stopping = false;
     private commandRunning = false;
     private rateLimits = new Map<string, number[]>();
@@ -54,6 +56,10 @@ export class Daemon {
             args: config.pi.args,
         });
         this.scheduler = scheduler;
+
+        if (config.server) {
+            this.httpServer = new HttpServer(config.server);
+        }
     }
 
     getLastUserInteractionTime(): number {
@@ -90,11 +96,18 @@ export class Daemon {
             await this.scheduler.start();
         }
 
+        if (this.httpServer) {
+            await this.httpServer.start();
+        }
+
         logger.info("simple-bot started", { listeners: this.listeners.length });
     }
 
     async stop(): Promise<void> {
         this.stopping = true;
+        if (this.httpServer) {
+            await this.httpServer.stop();
+        }
         if (this.scheduler) {
             await this.scheduler.stop();
         }
