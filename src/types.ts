@@ -49,6 +49,12 @@ export interface ToolEndInfo {
     isError: boolean;
 }
 
+export interface ServerConfig {
+    port: number;
+    token: string;
+    publicDir?: string;
+}
+
 export interface Config {
     pi: {
         cwd: string;
@@ -69,6 +75,7 @@ export interface Config {
         token: string;
     };
     cron?: CronConfig;
+    server?: ServerConfig;
 }
 
 export interface CronConfig {

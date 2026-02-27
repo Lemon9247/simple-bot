@@ -23,3 +23,8 @@ security:
 #     dir: /pi-cwd/cron.d
 #     default_notify: "#hades:athena"    # or Discord channel ID
 #     gracePeriodMs: 5000               # skip jobs if user message within last N ms (default: 5000)
+
+# server:
+#     port: 8484
+#     token: "env:SERVER_TOKEN"         # Required — Bearer token for API auth
+#     publicDir: /app/public            # Optional — defaults to ./public
