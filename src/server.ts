@@ -237,7 +237,7 @@ export class HttpServer {
         this.routes.get(path)!.set(method, handler);
     }
 
-    private handleRequest(req: IncomingMessage, res: ServerResponse): void {
+    private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
         const url = new URL(req.url ?? "/", `http://localhost`);
         const pathname = url.pathname;
 
@@ -254,14 +254,16 @@ export class HttpServer {
         if (methods) {
             const handler = methods.get(req.method ?? "GET");
             if (handler) {
-                const result = handler(req, res);
-                if (result instanceof Promise) {
-                    result.catch((err) => {
-                        logger.error("Route handler error", { path: pathname, error: String(err) });
-                        if (!res.headersSent) {
-                            this.json(res, 500, { error: "Internal server error" });
-                        }
-                    });
+                try {
+                    const result = handler(req, res);
+                    if (result instanceof Promise) {
+                        await result;
+                    }
+                } catch (err) {
+                    logger.error("Route handler error", { path: pathname, error: String(err) });
+                    if (!res.headersSent) {
+                        this.json(res, 500, { error: "Internal server error" });
+                    }
                 }
                 return;
             }
