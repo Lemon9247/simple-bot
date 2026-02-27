@@ -39,4 +39,12 @@ function validate(config: unknown): asserts config is Config {
             throw new Error("config: cron.dir is required and must be a string");
         }
     }
+    if (c.server) {
+        if (typeof c.server.port !== "number" || c.server.port < 1 || c.server.port > 65535) {
+            throw new Error("config: server.port must be a number between 1 and 65535");
+        }
+        if (!c.server.token || typeof c.server.token !== "string") {
+            throw new Error("config: server.token is required");
+        }
+    }
 }
