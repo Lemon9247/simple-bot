@@ -292,7 +292,7 @@
         <h1><span>simple-bot</span> dashboard</h1>
         <div class="auth-bar">
             <div class="status-dot" id="conn-dot" title="Disconnected"></div>
-            <input type="password" id="token-input" placeholder="API token" />
+            <input type="password" id="token-input" placeholder="API token (or use /#token=xxx)" />
             <button id="connect-btn">Connect</button>
         </div>
     </header>
@@ -393,13 +393,17 @@
             const $ = (id) => document.getElementById(id);
 
             // ─── Auth ─────────────────────────────────────────
-            // Check URL param first, then sessionStorage
-            const params = new URLSearchParams(window.location.search);
-            const urlToken = params.get('token');
+            // Check URL hash fragment first, then sessionStorage
+            // Hash fragments are never sent to the server, avoiding token leaks
+            // in browser history, server logs, and Referer headers.
+            // URL format: http://host:port/#token=xxx
+            const hash = window.location.hash.slice(1); // remove leading '#'
+            const hashParams = new URLSearchParams(hash);
+            const urlToken = hashParams.get('token');
             if (urlToken) {
                 token = urlToken;
                 sessionStorage.setItem('sb-token', token);
-                // Clean URL
+                // Clean URL — remove the hash fragment
                 window.history.replaceState({}, '', window.location.pathname);
             } else {
                 token = sessionStorage.getItem('sb-token') || '';
