@@ -136,6 +136,13 @@ export class Tracker {
         return this.lastContextSize;
     }
 
+    /** Model name from the most recent event. */
+    currentModel(): string {
+        if (this.count === 0) return "unknown";
+        const idx = (this.head - 1 + this.capacity) % this.capacity;
+        return this.buffer[idx]?.model ?? "unknown";
+    }
+
     /** Return all events matching a predicate, ordered oldest-first. */
     query(predicate?: (e: UsageEvent) => boolean): UsageEvent[] {
         const results: UsageEvent[] = [];

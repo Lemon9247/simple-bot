@@ -5,10 +5,12 @@ import type { ImageContent } from "./bridge.js";
 import { commandMap } from "./commands.js";
 import type { DaemonRef } from "./commands.js";
 import { Tracker } from "./tracker.js";
-import type { Config, Listener, IncomingMessage, MessageOrigin, ToolCallInfo, ToolEndInfo, JobDefinition, OutgoingFile, Attachment } from "./types.js";
+import type { Config, Listener, IncomingMessage, MessageOrigin, ToolCallInfo, ToolEndInfo, JobDefinition, OutgoingFile, Attachment, ActivityEntry } from "./types.js";
 import type { Scheduler } from "./scheduler.js";
 import { HttpServer } from "./server.js";
+import type { DashboardProvider } from "./server.js";
 import * as logger from "./logger.js";
+import { getLogBuffer } from "./logger.js";
 import { cleanupInbox, saveToInbox } from "./inbox.js";
 import { compressImage } from "./image.js";
 
@@ -16,6 +18,7 @@ const MAX_MESSAGE_LENGTH = 4000;
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX_PER_WINDOW = 10;
 const COMMAND_PREFIX = "bot!";
+const ACTIVITY_BUFFER_CAPACITY = 50;
 
 function formatToolCall(info: ToolCallInfo): string {
     const { toolName, args } = info;
@@ -39,7 +42,7 @@ function formatToolCall(info: ToolCallInfo): string {
     }
 }
 
-export class Daemon implements DaemonRef {
+export class Daemon implements DaemonRef, DashboardProvider {
     private config: Config;
     private bridge: Bridge;
     private listeners: Listener[] = [];
@@ -52,6 +55,7 @@ export class Daemon implements DaemonRef {
     private lastUserInteractionTime = 0;
     private startedAt = Date.now();
     private thinkingEnabled = false;
+    private activityBuffer: ActivityEntry[] = [];
 
     constructor(config: Config, bridge?: Bridge, scheduler?: Scheduler) {
         this.config = config;
@@ -64,7 +68,7 @@ export class Daemon implements DaemonRef {
         this.tracker = new Tracker(config.tracking);
 
         if (config.server) {
-            this.httpServer = new HttpServer(config.server);
+            this.httpServer = new HttpServer(config.server, this);
         }
     }
 
@@ -115,6 +119,73 @@ export class Daemon implements DaemonRef {
 
     getTracker(): Tracker {
         return this.tracker;
+    }
+
+    // ─── DashboardProvider implementation ─────────────────────
+
+    getModel(): string {
+        return this.tracker.currentModel();
+    }
+
+    getContextSize(): number {
+        return this.tracker.currentContext();
+    }
+
+    getListenerCount(): number {
+        return this.listeners.length;
+    }
+
+    getStartedAt(): number {
+        return this.startedAt;
+    }
+
+    getCronJobs(): Array<{ name: string; schedule: string; enabled: boolean }> {
+        if (!this.scheduler) return [];
+        const jobs = this.scheduler.getJobs();
+        const result: Array<{ name: string; schedule: string; enabled: boolean }> = [];
+        for (const [, active] of jobs) {
+            result.push({
+                name: active.definition.name,
+                schedule: active.definition.schedule,
+                enabled: active.definition.enabled,
+            });
+        }
+        return result;
+    }
+
+    getUsage(): {
+        today: { inputTokens: number; outputTokens: number; cost: number; messageCount: number };
+        week: { cost: number };
+        contextSize: number;
+    } {
+        const today = this.tracker.today();
+        const week = this.tracker.week();
+        return {
+            today,
+            week: { cost: week.cost },
+            contextSize: this.tracker.currentContext(),
+        };
+    }
+
+    getActivity(): ActivityEntry[] {
+        return [...this.activityBuffer];
+    }
+
+    getLogs(): Array<{ timestamp: string; level: string; message: string; [key: string]: unknown }> {
+        return getLogBuffer() as Array<{ timestamp: string; level: string; message: string; [key: string]: unknown }>;
+    }
+
+    private recordActivity(msg: IncomingMessage, responseTimeMs: number): void {
+        if (this.activityBuffer.length >= ACTIVITY_BUFFER_CAPACITY) {
+            this.activityBuffer.shift();
+        }
+        this.activityBuffer.push({
+            sender: msg.sender,
+            platform: msg.platform,
+            channel: msg.channel,
+            timestamp: Date.now(),
+            responseTimeMs,
+        });
     }
 
     async start(): Promise<void> {
@@ -262,6 +333,7 @@ export class Daemon implements DaemonRef {
         // Accumulate files from the `attach` tool during this response
         const pendingFiles: OutgoingFile[] = [];
         const pendingReads: Promise<void>[] = [];
+        const activityStart = Date.now();
 
         try {
             const response = await this.bridge.sendMessage(promptText, {
@@ -291,6 +363,9 @@ export class Daemon implements DaemonRef {
                 },
             });
 
+            // Record activity regardless of response
+            this.recordActivity(msg, Date.now() - activityStart);
+
             if (!response) return;
 
             // Wait for any pending file reads before sending
@@ -300,6 +375,7 @@ export class Daemon implements DaemonRef {
                 await listener.send(origin, response, pendingFiles.length > 0 ? pendingFiles : undefined);
             }
         } catch (err) {
+            this.recordActivity(msg, Date.now() - activityStart);
             logger.error("Failed to process message", { error: String(err) });
         } finally {
             clearInterval(typingInterval);

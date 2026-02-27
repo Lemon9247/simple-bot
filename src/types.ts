@@ -102,6 +102,14 @@ export interface UsageEvent {
     compaction: boolean;
 }
 
+export interface ActivityEntry {
+    sender: string;
+    platform: string;
+    channel: string;
+    timestamp: number;
+    responseTimeMs: number;
+}
+
 export type Step =
     | { type: "new-session" }
     | { type: "compact" }
