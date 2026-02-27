@@ -77,7 +77,20 @@ cron:
 
 ### Job files
 
-Each `.md` file in the cron directory is a job. The filename (minus `.md`) is the job name.
+Each `.md` file in the cron directory (or any subdirectory) is a job. The job name is derived from the relative path minus the `.md` extension. Subdirectories let you organize jobs by category:
+
+```
+cron.d/
+├── daily-cleanup.md          → job name: "daily-cleanup"
+├── morning/
+│   ├── checklist.md          → job name: "morning/checklist"
+│   └── greeting.md           → job name: "morning/greeting"
+└── maintenance/
+    └── weekly/
+        └── prune.md          → job name: "maintenance/weekly/prune"
+```
+
+Files in the root directory keep their simple name (backward compatible).
 
 ```markdown
 ---
@@ -115,7 +128,7 @@ Steps execute in order. If one fails, remaining steps are skipped. Jobs are skip
 
 ### Hot reload
 
-The scheduler watches the cron directory for changes. Add, edit, or delete a `.md` file and the scheduler picks it up within seconds — no restart needed.
+The scheduler watches the cron directory recursively for changes. Add, edit, or delete a `.md` file in any subdirectory and the scheduler picks it up within seconds — no restart needed.
 
 ### Notify resolution
 
