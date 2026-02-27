@@ -96,6 +96,15 @@ export class Daemon implements DaemonRef {
         this.thinkingEnabled = enabled;
     }
 
+    getUsageStats(): {
+        today: { inputTokens: number; outputTokens: number; cost: number; messageCount: number };
+        week: { cost: number };
+    } | null {
+        const today = this.tracker.today();
+        const week = this.tracker.week();
+        return { today, week: { cost: week.cost } };
+    }
+
     setScheduler(scheduler: Scheduler): void {
         this.scheduler = scheduler;
     }

@@ -5,6 +5,10 @@ export interface DaemonRef {
     getSchedulerStatus(): { total: number; enabled: number; names: string[] };
     getThinkingEnabled(): boolean;
     setThinkingEnabled(enabled: boolean): void;
+    getUsageStats(): {
+        today: { inputTokens: number; outputTokens: number; cost: number; messageCount: number };
+        week: { cost: number };
+    } | null;
 }
 
 export interface CommandContext {
@@ -150,12 +154,23 @@ export const statusCommand: Command = {
             }
         }
 
-        // TODO: Add usage line (📊 today: ...) when P4 tracker is implemented
+        let usageLine = "";
+        if (daemon) {
+            const stats = daemon.getUsageStats();
+            if (stats && stats.today.messageCount > 0) {
+                const costStr = `$${stats.today.cost.toFixed(2)}`;
+                const inK = `${Math.round(stats.today.inputTokens / 1000)}k`;
+                const outK = `${Math.round(stats.today.outputTokens / 1000)}k`;
+                usageLine = `📊 today: ${costStr} | ${inK} in / ${outK} out | ${stats.today.messageCount} msgs`;
+            }
+        }
+
         const lines = [
             `🟢 simple-bot | uptime ${uptimeStr} | model ${modelName}`,
             `💬 context: ${contextTokens} tokens`,
         ];
-        if (cronLine) lines.splice(1, 0, cronLine.trim());
+        if (usageLine) lines.splice(1, 0, usageLine);
+        if (cronLine) lines.splice(usageLine ? 2 : 1, 0, cronLine.trim());
 
         await reply(lines.join("\n"));
     },
