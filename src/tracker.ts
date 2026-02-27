@@ -162,6 +162,11 @@ export class Tracker {
 
     // --- internals ---
 
+    private startOfDayUTC(): number {
+        const now = new Date();
+        return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    }
+
     private insertEvent(event: UsageEvent): void {
         this.buffer[this.head] = event;
         this.head = (this.head + 1) % this.capacity;
