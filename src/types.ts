@@ -76,12 +76,30 @@ export interface Config {
     };
     cron?: CronConfig;
     server?: ServerConfig;
+    tracking?: TrackingConfig;
 }
 
 export interface CronConfig {
     dir: string;
     default_notify?: string;
     gracePeriodMs?: number;
+}
+
+export interface TrackingConfig {
+    usageLog?: string;
+    rates?: Record<string, { input: number; output: number }>;
+    capacity?: number;
+    retentionDays?: number;
+}
+
+export interface UsageEvent {
+    timestamp: number;
+    model: string;
+    inputTokens: number;
+    outputTokens: number;
+    contextSize: number;
+    cost: number;
+    compaction: boolean;
 }
 
 export type Step =
