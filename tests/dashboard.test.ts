@@ -375,6 +375,109 @@ describe("Tracker.currentModel()", () => {
     });
 });
 
+// ─── HTTP Integration Tests (T21) ─────────────────────────────
+// Consolidated tests: auth + valid JSON + response shape for all dashboard endpoints
+
+describe("Dashboard HTTP integration", () => {
+    let server: HttpServer;
+
+    beforeEach(async () => {
+        server = new HttpServer(makeConfig(), makeMockProvider());
+        await server.start();
+    });
+
+    afterEach(async () => {
+        await server.stop();
+    });
+
+    const endpoints = ["/api/status", "/api/cron", "/api/usage", "/api/activity", "/api/logs"];
+
+    for (const endpoint of endpoints) {
+        it(`${endpoint} returns 401 without auth`, async () => {
+            const { status, body } = await fetchJson(`${baseUrl(server)}${endpoint}`);
+            expect(status).toBe(401);
+            expect(body.error).toBe("Unauthorized");
+        });
+
+        it(`${endpoint} returns valid JSON with auth`, async () => {
+            const { status, body } = await fetchJson(`${baseUrl(server)}${endpoint}`, {
+                headers: authHeader(),
+            });
+            expect(status).toBe(200);
+            expect(body).toBeDefined();
+            expect(typeof body).toBe("object");
+        });
+    }
+
+    it("/api/status response has required fields", async () => {
+        const { body } = await fetchJson(`${baseUrl(server)}/api/status`, {
+            headers: authHeader(),
+        });
+        expect(body).toMatchObject({
+            ok: true,
+            model: expect.any(String),
+            contextSize: expect.any(Number),
+            listenerCount: expect.any(Number),
+            uptime: expect.any(Number),
+            startedAt: expect.any(String),
+        });
+    });
+
+    it("/api/usage response has required fields", async () => {
+        const { body } = await fetchJson(`${baseUrl(server)}/api/usage`, {
+            headers: authHeader(),
+        });
+        expect(body).toMatchObject({
+            today: {
+                inputTokens: expect.any(Number),
+                outputTokens: expect.any(Number),
+                cost: expect.any(Number),
+                messageCount: expect.any(Number),
+            },
+            week: { cost: expect.any(Number) },
+            contextSize: expect.any(Number),
+        });
+    });
+
+    it("/api/cron response has jobs array", async () => {
+        const { body } = await fetchJson(`${baseUrl(server)}/api/cron`, {
+            headers: authHeader(),
+        });
+        expect(Array.isArray(body.jobs)).toBe(true);
+        expect(body.jobs[0]).toMatchObject({
+            name: expect.any(String),
+            schedule: expect.any(String),
+            enabled: expect.any(Boolean),
+        });
+    });
+
+    it("/api/activity response has entries array", async () => {
+        const { body } = await fetchJson(`${baseUrl(server)}/api/activity`, {
+            headers: authHeader(),
+        });
+        expect(Array.isArray(body.entries)).toBe(true);
+        expect(body.entries[0]).toMatchObject({
+            sender: expect.any(String),
+            platform: expect.any(String),
+            channel: expect.any(String),
+            timestamp: expect.any(Number),
+            responseTimeMs: expect.any(Number),
+        });
+    });
+
+    it("/api/logs response has entries array", async () => {
+        const { body } = await fetchJson(`${baseUrl(server)}/api/logs`, {
+            headers: authHeader(),
+        });
+        expect(Array.isArray(body.entries)).toBe(true);
+        expect(body.entries[0]).toMatchObject({
+            timestamp: expect.any(String),
+            level: expect.any(String),
+            message: expect.any(String),
+        });
+    });
+});
+
 // ─── Method-not-allowed on new routes ─────────────────────────
 
 describe("Dashboard API: method restrictions", () => {
