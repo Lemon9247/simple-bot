@@ -99,6 +99,17 @@ export class Bridge extends EventEmitter {
         });
     }
 
+    async restart(): Promise<void> {
+        // Remove exit/error listeners from old process so the daemon
+        // doesn't treat this intentional stop as a crash.
+        if (this.proc) {
+            this.proc.removeAllListeners("exit");
+            this.proc.removeAllListeners("error");
+        }
+        await this.stop();
+        this.start();
+    }
+
     async stop(): Promise<void> {
         if (!this.proc) return;
         const p = this.proc;
