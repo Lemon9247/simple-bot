@@ -372,9 +372,6 @@ export class Daemon implements DaemonRef, DashboardProvider {
                 },
             });
 
-            // Record activity regardless of response
-            this.recordActivity(msg, Date.now() - activityStart);
-
             if (!response) return;
 
             // Wait for any pending file reads before sending
@@ -384,9 +381,9 @@ export class Daemon implements DaemonRef, DashboardProvider {
                 await listener.send(origin, response, pendingFiles.length > 0 ? pendingFiles : undefined);
             }
         } catch (err) {
-            this.recordActivity(msg, Date.now() - activityStart);
             logger.error("Failed to process message", { error: String(err) });
         } finally {
+            this.recordActivity(msg, Date.now() - activityStart);
             clearInterval(typingInterval);
         }
     }
