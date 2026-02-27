@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { basename } from "node:path";
+import { basename, relative } from "node:path";
 import matter from "gray-matter";
 import cron from "node-cron";
 import type { JobDefinition, Step } from "./types.js";
@@ -59,15 +59,17 @@ export function parseSteps(raw: unknown): Step[] {
     });
 }
 
-export async function parseJobFile(filePath: string): Promise<JobDefinition> {
+export async function parseJobFile(filePath: string, baseDir?: string): Promise<JobDefinition> {
     const content = await readFile(filePath, "utf-8");
-    return parseJobContent(content, filePath);
+    return parseJobContent(content, filePath, baseDir);
 }
 
-export function parseJobContent(content: string, filePath: string): JobDefinition {
+export function parseJobContent(content: string, filePath: string, baseDir?: string): JobDefinition {
     const { data, content: body } = matter(content);
 
-    const name = basename(filePath, ".md");
+    const name = baseDir
+        ? relative(baseDir, filePath).replace(/\.md$/, "").replace(/\\/g, "/")
+        : basename(filePath, ".md");
 
     if (!data.schedule || typeof data.schedule !== "string") {
         throw new JobParseError(filePath, "schedule is required and must be a string");

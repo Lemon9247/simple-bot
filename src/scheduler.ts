@@ -61,7 +61,7 @@ export class Scheduler extends EventEmitter {
     private async loadAllJobs(): Promise<void> {
         let entries: string[];
         try {
-            entries = await readdir(this.config.dir);
+            entries = await readdir(this.config.dir, { recursive: true });
         } catch (err) {
             logger.error("Failed to read cron directory", { dir: this.config.dir, error: String(err) });
             return;
@@ -75,7 +75,7 @@ export class Scheduler extends EventEmitter {
 
     private async loadJob(filePath: string): Promise<void> {
         try {
-            const definition = await parseJobFile(filePath);
+            const definition = await parseJobFile(filePath, this.config.dir);
 
             // Remove existing job with same name if reloading
             const existing = this.jobs.get(definition.name);
@@ -215,7 +215,7 @@ export class Scheduler extends EventEmitter {
 
     private startWatcher(): void {
         try {
-            this.watcher = watch(this.config.dir, (eventType, filename) => {
+            this.watcher = watch(this.config.dir, { recursive: true }, (eventType, filename) => {
                 if (!filename || !filename.endsWith(".md")) return;
                 this.debouncedReload(filename);
             });
@@ -241,7 +241,7 @@ export class Scheduler extends EventEmitter {
             setTimeout(async () => {
                 this.debounceTimers.delete(filename);
                 const filePath = join(this.config.dir, filename);
-                const name = filename.replace(/\.md$/, "");
+                const name = filename.replace(/\.md$/, "").replace(/\\/g, "/");
 
                 // Check if file still exists (might have been deleted)
                 try {
