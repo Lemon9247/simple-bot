@@ -110,7 +110,6 @@ export class Tracker {
         };
 
         this.insertEvent(event);
-        this.lastContextSize = data.contextSize;
 
         // Fire-and-forget JSONL append
         if (this.usageLogPath) {
