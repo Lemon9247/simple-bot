@@ -2,7 +2,7 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { join, extname, resolve } from "node:path";
 import { createHash } from "node:crypto";
-import type { ServerConfig } from "./types.js";
+import type { ServerConfig, WebhookHandler } from "./types.js";
 import * as logger from "./logger.js";
 
 const MIME_TYPES: Record<string, string> = {
@@ -16,7 +16,10 @@ const MIME_TYPES: Record<string, string> = {
     ".ico": "image/x-icon",
 };
 
-type RouteHandler = (req: IncomingMessage, res: ServerResponse) => void;
+const WEBHOOK_RATE_WINDOW_MS = 60_000;
+const WEBHOOK_RATE_MAX = 10;
+
+type RouteHandler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
 
 export class HttpServer {
     private server: Server;
@@ -24,6 +27,8 @@ export class HttpServer {
     private publicDir: string;
     private startTime: number;
     private routes = new Map<string, Map<string, RouteHandler>>();
+    private webhookHandler?: WebhookHandler;
+    private webhookRateLimits = new Map<string, number[]>();
 
     constructor(config: ServerConfig) {
         this.config = config;
@@ -68,6 +73,10 @@ export class HttpServer {
         });
     }
 
+    setWebhookHandler(handler: WebhookHandler): void {
+        this.webhookHandler = handler;
+    }
+
     private registerRoutes(): void {
         this.route("GET", "/api/ping", (_req, res) => {
             this.json(res, 200, { pong: true });
@@ -79,6 +88,47 @@ export class HttpServer {
                 uptime: Math.floor((Date.now() - this.startTime) / 1000),
                 startedAt: new Date(this.startTime).toISOString(),
             });
+        });
+
+        this.route("POST", "/api/webhook", async (req, res) => {
+            if (!this.webhookHandler) {
+                this.json(res, 503, { error: "Webhook handler not configured" });
+                return;
+            }
+
+            let body: any;
+            try {
+                body = await this.readJsonBody(req);
+            } catch {
+                this.json(res, 400, { error: "Invalid JSON body" });
+                return;
+            }
+
+            if (!body || typeof body.message !== "string" || !body.message.trim()) {
+                this.json(res, 400, { error: "Missing required field: message" });
+                return;
+            }
+
+            const rateBucket = body.source ?? "webhook";
+            if (this.isWebhookRateLimited(rateBucket)) {
+                this.json(res, 429, { error: "Rate limit exceeded" });
+                return;
+            }
+
+            try {
+                const result = await this.webhookHandler({
+                    message: body.message,
+                    notify: body.notify,
+                    source: body.source,
+                    session: body.session,
+                });
+
+                const status = result.queued ? 202 : 200;
+                this.json(res, status, result);
+            } catch (err) {
+                logger.error("Webhook handler error", { error: String(err) });
+                this.json(res, 500, { error: "Internal server error" });
+            }
         });
     }
 
@@ -106,7 +156,15 @@ export class HttpServer {
         if (methods) {
             const handler = methods.get(req.method ?? "GET");
             if (handler) {
-                handler(req, res);
+                const result = handler(req, res);
+                if (result instanceof Promise) {
+                    result.catch((err) => {
+                        logger.error("Route handler error", { path: pathname, error: String(err) });
+                        if (!res.headersSent) {
+                            this.json(res, 500, { error: "Internal server error" });
+                        }
+                    });
+                }
                 return;
             }
             // Path exists but wrong method
@@ -206,6 +264,36 @@ export class HttpServer {
 
         res.writeHead(200, { "Content-Type": contentType });
         createReadStream(resolved).pipe(res);
+    }
+
+    private readJsonBody(req: IncomingMessage): Promise<any> {
+        return new Promise((resolve, reject) => {
+            let data = "";
+            req.on("data", (chunk: Buffer) => { data += chunk.toString(); });
+            req.on("end", () => {
+                try {
+                    resolve(JSON.parse(data));
+                } catch {
+                    reject(new Error("Invalid JSON"));
+                }
+            });
+            req.on("error", reject);
+        });
+    }
+
+    private isWebhookRateLimited(bucket: string): boolean {
+        const now = Date.now();
+        const timestamps = this.webhookRateLimits.get(bucket) ?? [];
+        const recent = timestamps.filter((t) => now - t < WEBHOOK_RATE_WINDOW_MS);
+
+        if (recent.length >= WEBHOOK_RATE_MAX) {
+            this.webhookRateLimits.set(bucket, recent);
+            return true;
+        }
+
+        recent.push(now);
+        this.webhookRateLimits.set(bucket, recent);
+        return false;
     }
 
     private json(res: ServerResponse, status: number, body: unknown): void {

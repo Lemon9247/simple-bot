@@ -5,7 +5,7 @@ import type { ImageContent } from "./bridge.js";
 import { commandMap } from "./commands.js";
 import type { DaemonRef } from "./commands.js";
 import { Tracker } from "./tracker.js";
-import type { Config, Listener, IncomingMessage, MessageOrigin, ToolCallInfo, ToolEndInfo, JobDefinition, OutgoingFile, Attachment } from "./types.js";
+import type { Config, Listener, IncomingMessage, MessageOrigin, ToolCallInfo, ToolEndInfo, JobDefinition, OutgoingFile, Attachment, WebhookRequest, WebhookResult } from "./types.js";
 import type { Scheduler } from "./scheduler.js";
 import { HttpServer } from "./server.js";
 import * as logger from "./logger.js";
@@ -65,6 +65,7 @@ export class Daemon implements DaemonRef {
 
         if (config.server) {
             this.httpServer = new HttpServer(config.server);
+            this.httpServer.setWebhookHandler((req) => this.handleWebhook(req));
         }
     }
 
@@ -309,11 +310,42 @@ export class Daemon implements DaemonRef {
     private async handleSchedulerResponse(job: JobDefinition, response: string): Promise<void> {
         const notifyRoom = this.resolveNotify(job);
         if (!notifyRoom) return;
+        await this.sendToRoom(notifyRoom, response, `cron:${job.name}`);
+    }
 
-        const [platform, channel] = this.parseRoomId(notifyRoom);
+    private async handleWebhook(req: WebhookRequest): Promise<WebhookResult> {
+        const prefix = req.source ? `[webhook ${req.source}]` : `[webhook]`;
+        const prompt = `${prefix} ${req.message}`;
+
+        if (this.bridge.busy) {
+            // Fire-and-forget: the bridge queues it with followUp behavior
+            this.bridge.sendMessage(prompt).then((response) => {
+                if (req.notify) {
+                    this.sendToRoom(req.notify, response, `webhook:${req.source ?? "unknown"}`).catch((err) => {
+                        logger.error("Failed to send queued webhook response", { error: String(err) });
+                    });
+                }
+            }).catch((err) => {
+                logger.error("Queued webhook message failed", { error: String(err) });
+            });
+
+            return { ok: true, queued: true };
+        }
+
+        const response = await this.bridge.sendMessage(prompt);
+
+        if (req.notify) {
+            await this.sendToRoom(req.notify, response, `webhook:${req.source ?? "unknown"}`);
+        }
+
+        return { ok: true, response };
+    }
+
+    private async sendToRoom(roomId: string, text: string, label: string): Promise<void> {
+        const [platform, channel] = this.parseRoomId(roomId);
 
         if (!platform || !channel) {
-            logger.error("Invalid notify room format", { notifyRoom, job: job.name });
+            logger.error("Invalid notify room format", { roomId, label });
             return;
         }
 
@@ -322,12 +354,12 @@ export class Daemon implements DaemonRef {
 
         if (listener) {
             try {
-                await listener.send(origin, response);
+                await listener.send(origin, text);
             } catch (err) {
-                logger.error("Failed to send cron job response", { job: job.name, error: String(err) });
+                logger.error("Failed to send to room", { roomId, label, error: String(err) });
             }
         } else {
-            logger.error("No listener found for platform", { platform, job: job.name });
+            logger.error("No listener found for platform", { platform, label });
         }
     }
 

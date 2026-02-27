@@ -102,6 +102,25 @@ export interface UsageEvent {
     compaction: boolean;
 }
 
+// ─── Webhook Types ────────────────────────────────────────────
+
+export interface WebhookRequest {
+    message: string;
+    notify?: string;
+    source?: string;
+    session?: string;  // reserved for P8
+}
+
+export interface WebhookResult {
+    ok: boolean;
+    response?: string;
+    queued?: boolean;
+    error?: string;
+}
+
+/** Callback for handling inbound webhooks. Avoids circular server↔daemon imports. */
+export type WebhookHandler = (req: WebhookRequest) => Promise<WebhookResult>;
+
 export type Step =
     | { type: "new-session" }
     | { type: "compact" }
