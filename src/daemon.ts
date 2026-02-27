@@ -3,6 +3,7 @@ import { basename } from "node:path";
 import { Bridge } from "./bridge.js";
 import type { ImageContent } from "./bridge.js";
 import { commandMap } from "./commands.js";
+import type { DaemonRef } from "./commands.js";
 import type { Config, Listener, IncomingMessage, MessageOrigin, ToolCallInfo, ToolEndInfo, JobDefinition, OutgoingFile, Attachment } from "./types.js";
 import type { Scheduler } from "./scheduler.js";
 import * as logger from "./logger.js";
@@ -36,7 +37,7 @@ function formatToolCall(info: ToolCallInfo): string {
     }
 }
 
-export class Daemon {
+export class Daemon implements DaemonRef {
     private config: Config;
     private bridge: Bridge;
     private listeners: Listener[] = [];
@@ -45,6 +46,8 @@ export class Daemon {
     private commandRunning = false;
     private rateLimits = new Map<string, number[]>();
     private lastUserInteractionTime = 0;
+    private startedAt = Date.now();
+    private thinkingEnabled = false;
 
     constructor(config: Config, bridge?: Bridge, scheduler?: Scheduler) {
         this.config = config;
@@ -58,6 +61,30 @@ export class Daemon {
 
     getLastUserInteractionTime(): number {
         return this.lastUserInteractionTime;
+    }
+
+    getUptime(): number {
+        return Date.now() - this.startedAt;
+    }
+
+    getSchedulerStatus(): { total: number; enabled: number; names: string[] } {
+        if (!this.scheduler) return { total: 0, enabled: 0, names: [] };
+        const jobs = this.scheduler.getJobs();
+        const names: string[] = [];
+        let enabled = 0;
+        for (const [name, active] of jobs) {
+            names.push(name);
+            if (active.definition.enabled) enabled++;
+        }
+        return { total: names.length, enabled, names };
+    }
+
+    getThinkingEnabled(): boolean {
+        return this.thinkingEnabled;
+    }
+
+    setThinkingEnabled(enabled: boolean): void {
+        this.thinkingEnabled = enabled;
     }
 
     setScheduler(scheduler: Scheduler): void {
@@ -157,7 +184,7 @@ export class Daemon {
 
             this.commandRunning = true;
             try {
-                await command.execute({ args: parsed.args, bridge: this.bridge, reply });
+                await command.execute({ args: parsed.args, bridge: this.bridge, reply, daemon: this });
             } catch (err) {
                 logger.error("Command failed", { command: parsed.name, error: String(err) });
                 await reply(`❌ Command failed: ${String(err)}`);

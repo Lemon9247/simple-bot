@@ -99,6 +99,11 @@ export class Bridge extends EventEmitter {
         });
     }
 
+    async restart(): Promise<void> {
+        await this.stop();
+        this.start();
+    }
+
     async stop(): Promise<void> {
         if (!this.proc) return;
         const p = this.proc;

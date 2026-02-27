@@ -1,9 +1,17 @@
 import type { Bridge } from "./bridge.js";
 
+export interface DaemonRef {
+    getUptime(): number;
+    getSchedulerStatus(): { total: number; enabled: number; names: string[] };
+    getThinkingEnabled(): boolean;
+    setThinkingEnabled(enabled: boolean): void;
+}
+
 export interface CommandContext {
     args: string;
     bridge: Bridge;
     reply: (text: string) => Promise<void>;
+    daemon?: DaemonRef;
 }
 
 export interface Command {
@@ -89,6 +97,103 @@ export const commands: Command[] = [
     },
 ];
 
+function formatUptime(ms: number): string {
+    const seconds = Math.floor(ms / 1000);
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+
+    const parts: string[] = [];
+    if (days > 0) parts.push(`${days}d`);
+    if (hours > 0) parts.push(`${hours}h`);
+    if (parts.length === 0) parts.push(`${minutes}m`);
+    return parts.join(" ");
+}
+
 export const commandMap = new Map<string, Command>(
     commands.map((c) => [c.name, c]),
 );
+
+// --- Additional commands that need daemon access ---
+
+export const rebootCommand: Command = {
+    name: "reboot",
+    interrupts: true,
+    async execute({ bridge, reply }) {
+        await reply("🔄 Rebooting pi process...");
+        await bridge.restart();
+        await reply("✅ Rebooted.");
+    },
+};
+
+export const statusCommand: Command = {
+    name: "status",
+    async execute({ bridge, reply, daemon }) {
+        const uptimeStr = daemon ? formatUptime(daemon.getUptime()) : "unknown";
+
+        // Get model and context info via get_state RPC (P3-T4)
+        let modelName = "unknown";
+        let contextTokens = "?";
+        try {
+            const state = await bridge.command("get_state");
+            if (state?.model?.name) modelName = state.model.name;
+            if (state?.contextTokens != null) contextTokens = `~${Math.round(state.contextTokens / 1000)}k`;
+        } catch {
+            // pi not responding — use defaults
+        }
+
+        let cronLine = "";
+        if (daemon) {
+            const cron = daemon.getSchedulerStatus();
+            if (cron.total > 0) {
+                cronLine = `\n⏰ cron: ${cron.total} jobs (${cron.enabled} enabled)`;
+            }
+        }
+
+        // TODO: Add usage line (📊 today: ...) when P4 tracker is implemented
+        const lines = [
+            `🟢 simple-bot | uptime ${uptimeStr} | model ${modelName}`,
+            `💬 context: ${contextTokens} tokens`,
+        ];
+        if (cronLine) lines.splice(1, 0, cronLine.trim());
+
+        await reply(lines.join("\n"));
+    },
+};
+
+export const thinkCommand: Command = {
+    name: "think",
+    async execute({ args, bridge, reply, daemon }) {
+        if (!daemon) {
+            await reply("❌ Daemon reference not available.");
+            return;
+        }
+        const arg = args.toLowerCase().trim();
+        if (arg === "on") {
+            try {
+                await bridge.command("set_model_config", { thinking: true });
+                daemon.setThinkingEnabled(true);
+                await reply("🧠 Extended thinking **enabled**.");
+            } catch (err) {
+                await reply(`❌ Failed to enable thinking: ${String(err)}`);
+            }
+        } else if (arg === "off") {
+            try {
+                await bridge.command("set_model_config", { thinking: false });
+                daemon.setThinkingEnabled(false);
+                await reply("🧠 Extended thinking **disabled**.");
+            } catch (err) {
+                await reply(`❌ Failed to disable thinking: ${String(err)}`);
+            }
+        } else {
+            const state = daemon.getThinkingEnabled() ? "on" : "off";
+            await reply(`🧠 Extended thinking is currently **${state}**.\nUsage: \`bot!think on|off\``);
+        }
+    },
+};
+
+// Register the new commands
+commands.push(rebootCommand, statusCommand, thinkCommand);
+for (const cmd of [rebootCommand, statusCommand, thinkCommand]) {
+    commandMap.set(cmd.name, cmd);
+}
