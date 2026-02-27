@@ -35,6 +35,8 @@ const MIME_TYPES: Record<string, string> = {
 
 const WEBHOOK_RATE_WINDOW_MS = 60_000;
 const WEBHOOK_RATE_MAX = 10;
+const WEBHOOK_GLOBAL_RATE_MAX = 30;
+const WEBHOOK_GLOBAL_BUCKET = "__global__";
 
 type RouteHandler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
 export type WsRpcHandler = (message: { type: string; [key: string]: unknown }) => Promise<any>;
@@ -207,8 +209,15 @@ export class HttpServer {
                 return;
             }
 
+            // Global rate limit first (prevents bypass via many source values)
+            if (this.isWebhookRateLimited(WEBHOOK_GLOBAL_BUCKET, WEBHOOK_GLOBAL_RATE_MAX)) {
+                this.json(res, 429, { error: "Rate limit exceeded" });
+                return;
+            }
+
+            // Per-source rate limit
             const rateBucket = body.source ?? "webhook";
-            if (this.isWebhookRateLimited(rateBucket)) {
+            if (this.isWebhookRateLimited(rateBucket, WEBHOOK_RATE_MAX)) {
                 this.json(res, 429, { error: "Rate limit exceeded" });
                 return;
             }
@@ -408,12 +417,12 @@ export class HttpServer {
         });
     }
 
-    private isWebhookRateLimited(bucket: string): boolean {
+    private isWebhookRateLimited(bucket: string, max: number): boolean {
         const now = Date.now();
         const timestamps = this.webhookRateLimits.get(bucket) ?? [];
         const recent = timestamps.filter((t) => now - t < WEBHOOK_RATE_WINDOW_MS);
 
-        if (recent.length >= WEBHOOK_RATE_MAX) {
+        if (recent.length >= max) {
             this.webhookRateLimits.set(bucket, recent);
             return true;
         }
