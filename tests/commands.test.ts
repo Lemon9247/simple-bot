@@ -198,6 +198,34 @@ describe("bot!status", () => {
         expect(status).toContain("cron: 3 jobs (2 enabled)");
     });
 
+    it("shows usage stats when tracker has events", async () => {
+        const { spawnFn } = createMockProcess("ok");
+        const bridge = new Bridge({ cwd: "/tmp", spawnFn });
+        daemon = new Daemon(baseConfig, bridge);
+
+        const listener = new MockListener("discord");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        // Record usage events directly via the tracker
+        const tracker = daemon.getTracker();
+        tracker.record({ model: "claude-sonnet-4", inputTokens: 150_000, outputTokens: 80_000, contextSize: 45_000 });
+        tracker.record({ model: "claude-sonnet-4", inputTokens: 300_000, outputTokens: 140_000, contextSize: 60_000 });
+
+        sendCommand(listener, "bot!status");
+        await new Promise((r) => setTimeout(r, 50));
+
+        expect(listener.sent).toHaveLength(1);
+        const status = listener.sent[0].text;
+
+        // Should contain usage line with cost, tokens, and message count
+        expect(status).toContain("📊 today:");
+        expect(status).toContain("$");
+        expect(status).toContain("in /");
+        expect(status).toContain("out");
+        expect(status).toContain("2 msgs");
+    });
+
     it("gracefully handles get_state failure", async () => {
         const { proc, stdin, stdout } = createMockProcess();
         stdin.removeAllListeners("data");
