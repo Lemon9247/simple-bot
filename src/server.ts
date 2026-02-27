@@ -56,11 +56,14 @@ export class HttpServer {
 
     async stop(): Promise<void> {
         return new Promise((resolve) => {
+            const timeout = setTimeout(() => {
+                this.server.closeAllConnections();
+            }, 5000);
             this.server.close(() => {
+                clearTimeout(timeout);
                 logger.info("HTTP server stopped");
                 resolve();
             });
-            // Force-close idle keep-alive connections
             this.server.closeIdleConnections();
         });
     }
