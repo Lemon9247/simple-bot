@@ -372,6 +372,9 @@ export class Daemon implements DaemonRef {
                 const recorded = this.tracker.record({ model, inputTokens, outputTokens, contextSize: 0 });
                 logger.warn("Usage recorded without context size", {
                     model: recorded.model,
+                    inputTokens: recorded.inputTokens,
+                    outputTokens: recorded.outputTokens,
+                    cost: recorded.cost.toFixed(6),
                     error: String(err),
                 });
             });
