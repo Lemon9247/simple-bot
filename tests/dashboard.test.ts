@@ -326,6 +326,40 @@ describe("Dashboard API: /api/logs", () => {
     });
 });
 
+// ─── Activity Buffer Overflow (T25) ───────────────────────────
+
+describe("Activity buffer overflow", () => {
+    it("caps at 50 entries and drops oldest first", async () => {
+        const { Daemon } = await import("../src/daemon.js");
+        const { Bridge } = await import("../src/bridge.js");
+        const bridge = new Bridge({ cwd: "/tmp", spawnFn: () => { throw new Error("unused"); } });
+        const daemon = new Daemon(
+            { pi: { cwd: "/tmp" }, security: { allowed_users: [] } },
+            bridge,
+        );
+
+        // Fill the buffer past capacity (50) by calling private recordActivity
+        const record = (daemon as any).recordActivity.bind(daemon);
+        for (let i = 0; i < 60; i++) {
+            record(
+                { sender: `user-${i}`, platform: "test", channel: "ch", text: "hi" },
+                100 + i,
+            );
+        }
+
+        const activity = daemon.getActivity();
+        expect(activity).toHaveLength(50);
+
+        // Oldest entries (0-9) should have been dropped; first entry is user-10
+        expect(activity[0].sender).toBe("user-10");
+        expect(activity[0].responseTimeMs).toBe(110);
+
+        // Last entry is user-59
+        expect(activity[49].sender).toBe("user-59");
+        expect(activity[49].responseTimeMs).toBe(159);
+    });
+});
+
 // ─── Log Buffer Tests ─────────────────────────────────────────
 
 describe("Log ring buffer", () => {
