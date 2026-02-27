@@ -52,6 +52,13 @@ export function createMockProcess(responseText = "Hello world!", toolCalls?: Moc
                         { provider: "anthropic", id: "claude-sonnet-4", name: "Claude Sonnet 4" },
                     ],
                 };
+            } else if (cmd.type === "get_state") {
+                responseData = {
+                    model: { provider: "anthropic", id: "claude-sonnet-4", name: "Claude Sonnet 4" },
+                    contextTokens: 45200,
+                };
+            } else if (cmd.type === "set_model_config") {
+                responseData = {};
             }
 
             // Acknowledge the command
