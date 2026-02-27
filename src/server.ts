@@ -303,6 +303,12 @@ export class HttpServer {
             this.wsClients.add(ws);
             logger.info("WebSocket client connected at /attach");
 
+            // Keep-alive: ping every 30s so proxies/NAT don't drop idle connections.
+            // The ws package handles pong responses automatically.
+            const pingInterval = setInterval(() => {
+                if (ws.readyState === WebSocket.OPEN) ws.ping();
+            }, 30_000);
+
             ws.on("message", async (rawData) => {
                 let msg: any;
                 try {
@@ -332,11 +338,13 @@ export class HttpServer {
             });
 
             ws.on("close", () => {
+                clearInterval(pingInterval);
                 this.wsClients.delete(ws);
                 logger.info("WebSocket client disconnected");
             });
 
             ws.on("error", (err) => {
+                clearInterval(pingInterval);
                 logger.error("WebSocket client error", { error: String(err) });
                 this.wsClients.delete(ws);
             });
