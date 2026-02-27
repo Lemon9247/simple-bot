@@ -7,3 +7,4 @@ matrix-bot.json
 Dockerfile
 docker-compose.yml
 scripts/entrypoint.sh
+node_modules
