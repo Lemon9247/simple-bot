@@ -157,6 +157,15 @@ describe("Compaction detection", () => {
         const compact = tracker2.record({ model: "m", inputTokens: 100, outputTokens: 50, contextSize: 69_999 });
         expect(compact.compaction).toBe(true);
     });
+
+    it("exactly 70% of previous context does NOT trigger compaction", () => {
+        // Boundary: newContextSize < lastContextSize * 0.7
+        // 70_000 is NOT < 100_000 * 0.7 (70_000), so no compaction
+        const tracker = new Tracker({ capacity: 10 });
+        tracker.record({ model: "m", inputTokens: 100, outputTokens: 50, contextSize: 100_000 });
+        const event = tracker.record({ model: "m", inputTokens: 100, outputTokens: 50, contextSize: 70_000 });
+        expect(event.compaction).toBe(false);
+    });
 });
 
 // ---------- Aggregation (P4-T6) ----------
