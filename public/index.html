@@ -5,13 +5,633 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>simple-bot</title>
     <style>
-        body { font-family: system-ui, sans-serif; max-width: 600px; margin: 4rem auto; padding: 0 1rem; color: #333; }
-        h1 { font-size: 1.5rem; }
-        .status { color: #666; }
+        :root {
+            --bg: #0d1117;
+            --surface: #161b22;
+            --border: #30363d;
+            --text: #e6edf3;
+            --text-dim: #8b949e;
+            --accent: #58a6ff;
+            --green: #3fb950;
+            --yellow: #d29922;
+            --red: #f85149;
+            --orange: #db6d28;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.5;
+            padding: 1rem;
+        }
+
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem 0;
+            margin-bottom: 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        header h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        header h1 span { color: var(--accent); }
+
+        .auth-bar {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .auth-bar input {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 0.35rem 0.6rem;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            width: 200px;
+        }
+
+        .auth-bar button {
+            background: var(--accent);
+            color: var(--bg);
+            border: none;
+            padding: 0.35rem 0.8rem;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .auth-bar button:hover { opacity: 0.85; }
+
+        .auth-bar .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--red);
+        }
+
+        .auth-bar .status-dot.ok { background: var(--green); }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+            gap: 1rem;
+        }
+
+        .panel {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+        }
+
+        .panel h2 {
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-dim);
+            margin-bottom: 0.75rem;
+        }
+
+        /* Status panel */
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.3rem 0;
+            font-size: 0.9rem;
+        }
+
+        .stat-label { color: var(--text-dim); }
+        .stat-value { font-weight: 500; font-variant-numeric: tabular-nums; }
+
+        .context-gauge {
+            margin-top: 0.5rem;
+        }
+
+        .context-gauge .bar-track {
+            height: 8px;
+            background: var(--bg);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .context-gauge .bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.4s ease, background-color 0.4s ease;
+            min-width: 2px;
+        }
+
+        .context-gauge .bar-label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            margin-top: 0.25rem;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+
+        th {
+            text-align: left;
+            color: var(--text-dim);
+            font-weight: 500;
+            padding: 0.4rem 0.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        td {
+            padding: 0.4rem 0.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        tr:last-child td { border-bottom: none; }
+
+        .badge {
+            display: inline-block;
+            padding: 0.1rem 0.5rem;
+            border-radius: 10px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .badge-on { background: rgba(63, 185, 80, 0.15); color: var(--green); }
+        .badge-off { background: rgba(139, 148, 158, 0.15); color: var(--text-dim); }
+
+        /* Usage panel */
+        .usage-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.75rem;
+        }
+
+        .usage-card {
+            background: var(--bg);
+            border-radius: 6px;
+            padding: 0.6rem 0.75rem;
+        }
+
+        .usage-card .label {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            margin-bottom: 0.2rem;
+        }
+
+        .usage-card .value {
+            font-size: 1.1rem;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .usage-card .value.cost { color: var(--green); }
+
+        /* Activity panel */
+        .activity-list {
+            max-height: 280px;
+            overflow-y: auto;
+        }
+
+        .activity-item {
+            display: flex;
+            align-items: baseline;
+            gap: 0.5rem;
+            padding: 0.35rem 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.85rem;
+        }
+
+        .activity-item:last-child { border-bottom: none; }
+
+        .activity-sender {
+            font-weight: 500;
+            color: var(--accent);
+            min-width: 80px;
+        }
+
+        .activity-platform {
+            color: var(--text-dim);
+            font-size: 0.75rem;
+            min-width: 60px;
+        }
+
+        .activity-time {
+            color: var(--text-dim);
+            font-size: 0.75rem;
+            margin-left: auto;
+            white-space: nowrap;
+        }
+
+        .activity-rt {
+            color: var(--text-dim);
+            font-size: 0.7rem;
+            min-width: 50px;
+            text-align: right;
+        }
+
+        /* Log panel */
+        .log-panel { grid-column: 1 / -1; }
+
+        .log-container {
+            max-height: 320px;
+            overflow-y: auto;
+            background: var(--bg);
+            border-radius: 6px;
+            padding: 0.5rem;
+            font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+            font-size: 0.78rem;
+            line-height: 1.6;
+        }
+
+        .log-entry {
+            padding: 0.1rem 0.3rem;
+            border-radius: 3px;
+        }
+
+        .log-entry:hover { background: rgba(255,255,255,0.03); }
+
+        .log-ts { color: var(--text-dim); }
+        .log-level { font-weight: 600; min-width: 42px; display: inline-block; }
+        .log-level.info { color: var(--accent); }
+        .log-level.warn { color: var(--yellow); }
+        .log-level.error { color: var(--red); }
+        .log-msg { color: var(--text); }
+
+        .empty-state {
+            color: var(--text-dim);
+            font-style: italic;
+            font-size: 0.85rem;
+            padding: 1rem 0;
+            text-align: center;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
     </style>
 </head>
 <body>
-    <h1>simple-bot</h1>
-    <p class="status">Dashboard coming soon.</p>
+    <header>
+        <h1><span>simple-bot</span> dashboard</h1>
+        <div class="auth-bar">
+            <div class="status-dot" id="conn-dot" title="Disconnected"></div>
+            <input type="password" id="token-input" placeholder="API token" />
+            <button id="connect-btn">Connect</button>
+        </div>
+    </header>
+
+    <div class="grid" id="dashboard" style="display:none;">
+        <!-- Status Panel (P5-T4) -->
+        <div class="panel" id="status-panel">
+            <h2>Status</h2>
+            <div class="stat-row">
+                <span class="stat-label">Uptime</span>
+                <span class="stat-value" id="st-uptime">—</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Model</span>
+                <span class="stat-value" id="st-model">—</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Listeners</span>
+                <span class="stat-value" id="st-listeners">—</span>
+            </div>
+            <div class="context-gauge">
+                <div class="stat-row">
+                    <span class="stat-label">Context</span>
+                    <span class="stat-value" id="st-ctx-pct">—</span>
+                </div>
+                <div class="bar-track">
+                    <div class="bar-fill" id="ctx-bar" style="width:0%;background:var(--green);"></div>
+                </div>
+                <div class="bar-label">
+                    <span id="ctx-used">0</span>
+                    <span id="ctx-max">200k</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Cron Panel (P5-T5) -->
+        <div class="panel" id="cron-panel">
+            <h2>Cron Jobs</h2>
+            <div id="cron-content">
+                <div class="empty-state">No cron jobs</div>
+            </div>
+        </div>
+
+        <!-- Usage Panel (P5-T7) -->
+        <div class="panel" id="usage-panel">
+            <h2>Usage</h2>
+            <div class="usage-grid">
+                <div class="usage-card">
+                    <div class="label">Today Cost</div>
+                    <div class="value cost" id="us-today-cost">$0.00</div>
+                </div>
+                <div class="usage-card">
+                    <div class="label">Week Cost</div>
+                    <div class="value cost" id="us-week-cost">$0.00</div>
+                </div>
+                <div class="usage-card">
+                    <div class="label">Messages Today</div>
+                    <div class="value" id="us-msgs">0</div>
+                </div>
+                <div class="usage-card">
+                    <div class="label">Tokens (in/out)</div>
+                    <div class="value" id="us-tokens">0 / 0</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Activity Panel (P5-T6) -->
+        <div class="panel" id="activity-panel">
+            <h2>Recent Activity</h2>
+            <div class="activity-list" id="activity-list">
+                <div class="empty-state">No recent activity</div>
+            </div>
+        </div>
+
+        <!-- Log Panel (P5-T8) -->
+        <div class="panel log-panel" id="log-panel">
+            <h2>Logs</h2>
+            <div class="log-container" id="log-container">
+                <div class="empty-state">No log entries</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            'use strict';
+
+            // ─── Config ───────────────────────────────────────
+            const CONTEXT_WINDOW = 200000; // estimated max context tokens
+            const REFRESH_FAST = 5000;     // activity: 5s
+            const REFRESH_SLOW = 30000;    // status/usage/cron/logs: 30s
+
+            // ─── State ────────────────────────────────────────
+            let token = '';
+            let connected = false;
+            let timers = [];
+
+            const $ = (id) => document.getElementById(id);
+
+            // ─── Auth ─────────────────────────────────────────
+            // Check URL param first, then sessionStorage
+            const params = new URLSearchParams(window.location.search);
+            const urlToken = params.get('token');
+            if (urlToken) {
+                token = urlToken;
+                sessionStorage.setItem('sb-token', token);
+                // Clean URL
+                window.history.replaceState({}, '', window.location.pathname);
+            } else {
+                token = sessionStorage.getItem('sb-token') || '';
+            }
+
+            if (token) {
+                $('token-input').value = '••••••••';
+                tryConnect();
+            }
+
+            $('connect-btn').addEventListener('click', () => {
+                const input = $('token-input').value.trim();
+                if (input && input !== '••••••••') {
+                    token = input;
+                    sessionStorage.setItem('sb-token', token);
+                }
+                tryConnect();
+            });
+
+            $('token-input').addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') $('connect-btn').click();
+            });
+
+            async function tryConnect() {
+                if (!token) return;
+                try {
+                    const res = await apiFetch('/api/ping');
+                    if (res.pong) {
+                        connected = true;
+                        $('conn-dot').classList.add('ok');
+                        $('conn-dot').title = 'Connected';
+                        $('connect-btn').textContent = 'Connected';
+                        $('dashboard').style.display = '';
+                        startPolling();
+                    }
+                } catch {
+                    connected = false;
+                    $('conn-dot').classList.remove('ok');
+                    $('conn-dot').title = 'Auth failed';
+                    $('connect-btn').textContent = 'Retry';
+                }
+            }
+
+            // ─── API ──────────────────────────────────────────
+            async function apiFetch(path) {
+                const res = await fetch(path, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) throw new Error(res.status + '');
+                return res.json();
+            }
+
+            // ─── Polling (P5-T9) ─────────────────────────────
+            function startPolling() {
+                // Stop any existing timers
+                timers.forEach(clearInterval);
+                timers = [];
+
+                // Immediate fetch all
+                refreshStatus();
+                refreshCron();
+                refreshUsage();
+                refreshActivity();
+                refreshLogs();
+
+                // Fast: activity
+                timers.push(setInterval(refreshActivity, REFRESH_FAST));
+
+                // Slow: everything else
+                timers.push(setInterval(refreshStatus, REFRESH_SLOW));
+                timers.push(setInterval(refreshUsage, REFRESH_SLOW));
+                timers.push(setInterval(refreshCron, REFRESH_SLOW));
+                timers.push(setInterval(refreshLogs, REFRESH_SLOW));
+            }
+
+            // ─── Status Panel ─────────────────────────────────
+            async function refreshStatus() {
+                try {
+                    const d = await apiFetch('/api/status');
+                    $('st-uptime').textContent = formatUptime(d.uptime);
+                    $('st-model').textContent = d.model || '—';
+                    $('st-listeners').textContent = d.listenerCount ?? '—';
+
+                    const ctx = d.contextSize || 0;
+                    const pct = Math.min(100, Math.round((ctx / CONTEXT_WINDOW) * 100));
+                    $('st-ctx-pct').textContent = pct + '%';
+                    $('ctx-bar').style.width = pct + '%';
+                    $('ctx-bar').style.background = gaugeColor(pct);
+                    $('ctx-used').textContent = formatTokens(ctx);
+                    $('ctx-max').textContent = formatTokens(CONTEXT_WINDOW);
+                } catch { /* ignore */ }
+            }
+
+            // ─── Cron Panel ───────────────────────────────────
+            async function refreshCron() {
+                try {
+                    const d = await apiFetch('/api/cron');
+                    const jobs = d.jobs || [];
+                    if (jobs.length === 0) {
+                        $('cron-content').innerHTML = '<div class="empty-state">No cron jobs</div>';
+                        return;
+                    }
+                    let html = '<table><tr><th>Name</th><th>Schedule</th><th>Status</th></tr>';
+                    for (const j of jobs) {
+                        const badge = j.enabled
+                            ? '<span class="badge badge-on">enabled</span>'
+                            : '<span class="badge badge-off">disabled</span>';
+                        html += '<tr><td>' + esc(j.name) + '</td><td><code>' + esc(j.schedule) + '</code></td><td>' + badge + '</td></tr>';
+                    }
+                    html += '</table>';
+                    $('cron-content').innerHTML = html;
+                } catch { /* ignore */ }
+            }
+
+            // ─── Usage Panel ──────────────────────────────────
+            async function refreshUsage() {
+                try {
+                    const d = await apiFetch('/api/usage');
+                    $('us-today-cost').textContent = '$' + d.today.cost.toFixed(4);
+                    $('us-week-cost').textContent = '$' + d.week.cost.toFixed(4);
+                    $('us-msgs').textContent = d.today.messageCount;
+                    $('us-tokens').textContent = formatTokens(d.today.inputTokens) + ' / ' + formatTokens(d.today.outputTokens);
+                } catch { /* ignore */ }
+            }
+
+            // ─── Activity Panel ───────────────────────────────
+            async function refreshActivity() {
+                try {
+                    const d = await apiFetch('/api/activity');
+                    const entries = d.entries || [];
+                    if (entries.length === 0) {
+                        $('activity-list').innerHTML = '<div class="empty-state">No recent activity</div>';
+                        return;
+                    }
+                    let html = '';
+                    // Show newest first
+                    for (let i = entries.length - 1; i >= 0; i--) {
+                        const e = entries[i];
+                        html += '<div class="activity-item">'
+                            + '<span class="activity-sender">' + esc(e.sender) + '</span>'
+                            + '<span class="activity-platform">' + esc(e.platform) + '</span>'
+                            + '<span class="activity-time">' + timeAgo(e.timestamp) + '</span>'
+                            + '<span class="activity-rt">' + e.responseTimeMs + 'ms</span>'
+                            + '</div>';
+                    }
+                    $('activity-list').innerHTML = html;
+                } catch { /* ignore */ }
+            }
+
+            // ─── Log Panel ────────────────────────────────────
+            async function refreshLogs() {
+                try {
+                    const d = await apiFetch('/api/logs');
+                    const entries = d.entries || [];
+                    const container = $('log-container');
+                    const wasAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 30;
+
+                    if (entries.length === 0) {
+                        container.innerHTML = '<div class="empty-state">No log entries</div>';
+                        return;
+                    }
+
+                    let html = '';
+                    for (const e of entries) {
+                        const ts = e.timestamp ? e.timestamp.slice(11, 19) : '';
+                        const lvl = e.level || 'info';
+                        // Build extra data string (exclude standard fields)
+                        const extras = Object.keys(e)
+                            .filter(k => !['timestamp', 'level', 'message'].includes(k))
+                            .map(k => k + '=' + JSON.stringify(e[k]))
+                            .join(' ');
+                        const extraStr = extras ? ' <span class="log-ts">' + esc(extras) + '</span>' : '';
+                        html += '<div class="log-entry">'
+                            + '<span class="log-ts">' + ts + '</span> '
+                            + '<span class="log-level ' + lvl + '">' + lvl.toUpperCase() + '</span> '
+                            + '<span class="log-msg">' + esc(e.message) + '</span>'
+                            + extraStr
+                            + '</div>';
+                    }
+                    container.innerHTML = html;
+
+                    // Auto-scroll if user was near the bottom
+                    if (wasAtBottom) {
+                        container.scrollTop = container.scrollHeight;
+                    }
+                } catch { /* ignore */ }
+            }
+
+            // ─── Helpers ──────────────────────────────────────
+            function formatUptime(seconds) {
+                if (seconds == null) return '—';
+                const d = Math.floor(seconds / 86400);
+                const h = Math.floor((seconds % 86400) / 3600);
+                const m = Math.floor((seconds % 3600) / 60);
+                const s = seconds % 60;
+                if (d > 0) return d + 'd ' + h + 'h ' + m + 'm';
+                if (h > 0) return h + 'h ' + m + 'm ' + s + 's';
+                if (m > 0) return m + 'm ' + s + 's';
+                return s + 's';
+            }
+
+            function formatTokens(n) {
+                if (n == null || n === 0) return '0';
+                if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+                if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+                return n + '';
+            }
+
+            function gaugeColor(pct) {
+                if (pct < 50) return 'var(--green)';
+                if (pct < 75) return 'var(--yellow)';
+                if (pct < 90) return 'var(--orange)';
+                return 'var(--red)';
+            }
+
+            function timeAgo(ts) {
+                const diff = Math.floor((Date.now() - ts) / 1000);
+                if (diff < 60) return diff + 's ago';
+                if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+                if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+                return Math.floor(diff / 86400) + 'd ago';
+            }
+
+            function esc(s) {
+                if (s == null) return '';
+                return String(s)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;');
+            }
+        })();
+    </script>
 </body>
 </html>
