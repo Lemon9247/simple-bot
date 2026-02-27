@@ -121,6 +121,14 @@ export interface WebhookResult {
 /** Callback for handling inbound webhooks. Avoids circular server↔daemon imports. */
 export type WebhookHandler = (req: WebhookRequest) => Promise<WebhookResult>;
 
+export interface ActivityEntry {
+    sender: string;
+    platform: string;
+    channel: string;
+    timestamp: number;
+    responseTimeMs: number;
+}
+
 export type Step =
     | { type: "new-session" }
     | { type: "compact" }

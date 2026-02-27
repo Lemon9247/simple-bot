@@ -11,6 +11,19 @@ export interface LogEntry {
     [key: string]: unknown;
 }
 
+const LOG_BUFFER_CAPACITY = 200;
+const logBuffer: LogEntry[] = [];
+
+/** Return a copy of recent log entries (oldest first, up to 200). */
+export function getLogBuffer(): LogEntry[] {
+    return [...logBuffer];
+}
+
+/** Clear the log buffer (for testing). */
+export function clearLogBuffer(): void {
+    logBuffer.length = 0;
+}
+
 export function log(level: LogLevel, message: string, data?: LogData): void {
     const entry: LogEntry = {
         timestamp: new Date().toISOString(),
@@ -18,6 +31,12 @@ export function log(level: LogLevel, message: string, data?: LogData): void {
         message,
         ...data,
     };
+
+    // Push to ring buffer
+    if (logBuffer.length >= LOG_BUFFER_CAPACITY) {
+        logBuffer.shift();
+    }
+    logBuffer.push(entry);
 
     const output = level === "error" ? process.stderr : process.stdout;
     output.write(JSON.stringify(entry) + "\n");

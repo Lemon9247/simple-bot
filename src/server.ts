@@ -2,8 +2,24 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { join, extname, resolve } from "node:path";
 import { createHash } from "node:crypto";
-import type { ServerConfig, WebhookHandler } from "./types.js";
+import type { ServerConfig, WebhookHandler, ActivityEntry } from "./types.js";
 import * as logger from "./logger.js";
+
+export interface DashboardProvider {
+    getUptime(): number;
+    getStartedAt(): number;
+    getModel(): string;
+    getContextSize(): number;
+    getListenerCount(): number;
+    getCronJobs(): Array<{ name: string; schedule: string; enabled: boolean }>;
+    getUsage(): {
+        today: { inputTokens: number; outputTokens: number; cost: number; messageCount: number };
+        week: { cost: number };
+        contextSize: number;
+    };
+    getActivity(): ActivityEntry[];
+    getLogs(): Array<{ timestamp: string; level: string; message: string; [key: string]: unknown }>;
+}
 
 const MIME_TYPES: Record<string, string> = {
     ".html": "text/html",
@@ -29,9 +45,11 @@ export class HttpServer {
     private routes = new Map<string, Map<string, RouteHandler>>();
     private webhookHandler?: WebhookHandler;
     private webhookRateLimits = new Map<string, number[]>();
+    private dashboard: DashboardProvider | null;
 
-    constructor(config: ServerConfig) {
+    constructor(config: ServerConfig, dashboard?: DashboardProvider) {
         this.config = config;
+        this.dashboard = dashboard ?? null;
         this.publicDir = config.publicDir
             ? resolve(config.publicDir)
             : resolve("public");
@@ -83,11 +101,58 @@ export class HttpServer {
         });
 
         this.route("GET", "/api/status", (_req, res) => {
-            this.json(res, 200, {
-                ok: true,
-                uptime: Math.floor((Date.now() - this.startTime) / 1000),
-                startedAt: new Date(this.startTime).toISOString(),
-            });
+            if (this.dashboard) {
+                this.json(res, 200, {
+                    ok: true,
+                    uptime: Math.floor(this.dashboard.getUptime() / 1000),
+                    startedAt: new Date(this.dashboard.getStartedAt()).toISOString(),
+                    model: this.dashboard.getModel(),
+                    contextSize: this.dashboard.getContextSize(),
+                    listenerCount: this.dashboard.getListenerCount(),
+                });
+            } else {
+                this.json(res, 200, {
+                    ok: true,
+                    uptime: Math.floor((Date.now() - this.startTime) / 1000),
+                    startedAt: new Date(this.startTime).toISOString(),
+                });
+            }
+        });
+
+        this.route("GET", "/api/cron", (_req, res) => {
+            if (!this.dashboard) {
+                this.json(res, 200, { jobs: [] });
+                return;
+            }
+            this.json(res, 200, { jobs: this.dashboard.getCronJobs() });
+        });
+
+        this.route("GET", "/api/usage", (_req, res) => {
+            if (!this.dashboard) {
+                this.json(res, 200, {
+                    today: { inputTokens: 0, outputTokens: 0, cost: 0, messageCount: 0 },
+                    week: { cost: 0 },
+                    contextSize: 0,
+                });
+                return;
+            }
+            this.json(res, 200, this.dashboard.getUsage());
+        });
+
+        this.route("GET", "/api/activity", (_req, res) => {
+            if (!this.dashboard) {
+                this.json(res, 200, { entries: [] });
+                return;
+            }
+            this.json(res, 200, { entries: this.dashboard.getActivity() });
+        });
+
+        this.route("GET", "/api/logs", (_req, res) => {
+            if (!this.dashboard) {
+                this.json(res, 200, { entries: [] });
+                return;
+            }
+            this.json(res, 200, { entries: this.dashboard.getLogs() });
         });
 
         this.route("POST", "/api/webhook", async (req, res) => {
