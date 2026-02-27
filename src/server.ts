@@ -2,6 +2,7 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { join, extname, resolve } from "node:path";
 import { createHash } from "node:crypto";
+import { WebSocketServer, WebSocket } from "ws";
 import type { ServerConfig, WebhookHandler, ActivityEntry } from "./types.js";
 import * as logger from "./logger.js";
 
@@ -36,6 +37,7 @@ const WEBHOOK_RATE_WINDOW_MS = 60_000;
 const WEBHOOK_RATE_MAX = 10;
 
 type RouteHandler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+export type WsRpcHandler = (message: { type: string; [key: string]: unknown }) => Promise<any>;
 
 export class HttpServer {
     private server: Server;
@@ -46,6 +48,9 @@ export class HttpServer {
     private webhookHandler?: WebhookHandler;
     private webhookRateLimits = new Map<string, number[]>();
     private dashboard: DashboardProvider | null;
+    private wss: WebSocketServer;
+    private wsClients = new Set<WebSocket>();
+    private wsHandler?: WsRpcHandler;
 
     constructor(config: ServerConfig, dashboard?: DashboardProvider) {
         this.config = config;
@@ -57,6 +62,7 @@ export class HttpServer {
 
         this.server = createServer((req, res) => this.handleRequest(req, res));
         this.server.on("upgrade", (req, socket, head) => this.handleUpgrade(req, socket, head));
+        this.wss = new WebSocketServer({ noServer: true });
 
         this.registerRoutes();
     }
@@ -64,6 +70,27 @@ export class HttpServer {
     /** Expose the underlying http.Server for testing */
     get raw(): Server {
         return this.server;
+    }
+
+    /** Number of connected WebSocket clients */
+    get wsClientCount(): number {
+        return this.wsClients.size;
+    }
+
+    /** Set the handler for incoming WebSocket RPC commands */
+    setWsHandler(handler: WsRpcHandler): void {
+        this.wsHandler = handler;
+    }
+
+    /** Broadcast a bridge event to all connected WebSocket clients */
+    broadcastEvent(event: any): void {
+        if (this.wsClients.size === 0) return;
+        const data = JSON.stringify(event);
+        for (const client of this.wsClients) {
+            if (client.readyState === WebSocket.OPEN) {
+                client.send(data);
+            }
+        }
     }
 
     async start(): Promise<void> {
@@ -78,6 +105,12 @@ export class HttpServer {
     }
 
     async stop(): Promise<void> {
+        // Close all WebSocket connections first
+        for (const client of this.wsClients) {
+            client.close(1001, "Server shutting down");
+        }
+        this.wsClients.clear();
+
         return new Promise((resolve) => {
             const timeout = setTimeout(() => {
                 this.server.closeAllConnections();
@@ -247,7 +280,7 @@ export class HttpServer {
         this.json(res, 404, { error: "Not Found" });
     }
 
-    private handleUpgrade(req: IncomingMessage, socket: import("node:net").Socket, _head: Buffer): void {
+    private handleUpgrade(req: IncomingMessage, socket: import("node:stream").Duplex, head: Buffer): void {
         const url = new URL(req.url ?? "/", `http://localhost`);
 
         if (url.pathname !== "/attach") {
@@ -256,44 +289,63 @@ export class HttpServer {
             return;
         }
 
-        if (!this.authenticate(req)) {
+        // Auth: bearer token via Authorization header or ?token= query param
+        const queryToken = url.searchParams.get("token");
+        if (!this.authenticate(req) && queryToken !== this.config.token) {
             socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
             socket.destroy();
             return;
         }
 
-        // WebSocket upgrade skeleton — accept the connection and immediately close
-        // Full implementation deferred to P6
-        const acceptKey = req.headers["sec-websocket-key"];
-        if (!acceptKey) {
-            socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
-            socket.destroy();
-            return;
+        this.wss.handleUpgrade(req, socket, head, (ws) => {
+            this.wsClients.add(ws);
+            logger.info("WebSocket client connected at /attach");
+
+            ws.on("message", async (rawData) => {
+                let msg: any;
+                try {
+                    msg = JSON.parse(rawData.toString());
+                } catch {
+                    this.wsSend(ws, { type: "error", error: "Invalid JSON" });
+                    return;
+                }
+
+                if (!msg.type) {
+                    this.wsSend(ws, { id: msg.id, type: "response", success: false, error: "Missing type" });
+                    return;
+                }
+
+                if (!this.wsHandler) {
+                    this.wsSend(ws, { id: msg.id, type: "response", success: false, error: "No handler configured" });
+                    return;
+                }
+
+                try {
+                    const { id, type, ...params } = msg;
+                    const result = await this.wsHandler({ type, ...params });
+                    this.wsSend(ws, { id, type: "response", success: true, data: result });
+                } catch (err) {
+                    this.wsSend(ws, { id: msg.id, type: "response", success: false, error: String(err) });
+                }
+            });
+
+            ws.on("close", () => {
+                this.wsClients.delete(ws);
+                logger.info("WebSocket client disconnected");
+            });
+
+            ws.on("error", (err) => {
+                logger.error("WebSocket client error", { error: String(err) });
+                this.wsClients.delete(ws);
+            });
+        });
+    }
+
+    /** Send JSON to a WebSocket client if still open */
+    private wsSend(ws: WebSocket, data: any): void {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(data));
         }
-
-        const hash = createHash("sha1")
-            .update(acceptKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
-            .digest("base64");
-
-        socket.write(
-            "HTTP/1.1 101 Switching Protocols\r\n" +
-            "Upgrade: websocket\r\n" +
-            "Connection: Upgrade\r\n" +
-            `Sec-WebSocket-Accept: ${hash}\r\n` +
-            "\r\n"
-        );
-
-        logger.info("WebSocket connected at /attach (skeleton)");
-
-        // Send a close frame (opcode 0x8) after a short delay
-        setTimeout(() => {
-            if (!socket.destroyed) {
-                // WebSocket close frame: FIN + opcode 8, payload length 2, status 1000 (normal)
-                const closeFrame = Buffer.from([0x88, 0x02, 0x03, 0xe8]);
-                socket.write(closeFrame);
-                socket.end();
-            }
-        }, 100);
     }
 
     private authenticate(req: IncomingMessage): boolean {

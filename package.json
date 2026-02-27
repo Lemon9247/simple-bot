@@ -9,21 +9,25 @@
         "build": "tsc",
         "dev": "tsx src/main.ts",
         "start": "node dist/main.js",
+        "tui": "tsx src/tui/main.ts",
         "test": "vitest run",
         "test:watch": "vitest"
     },
     "dependencies": {
+        "@mariozechner/pi-tui": "^0.55.1",
         "discord.js": "^13.17.1",
         "gray-matter": "^4.0.3",
         "js-yaml": "^4.1.1",
         "matrix-bot-sdk": "^0.8.0",
         "node-cron": "^4.2.1",
-        "sharp": "^0.34.5"
+        "sharp": "^0.34.5",
+        "ws": "^8.19.0"
     },
     "devDependencies": {
         "@types/js-yaml": "^4.0.9",
         "@types/node": "^25.2.3",
         "@types/node-cron": "^3.0.11",
+        "@types/ws": "^8.18.1",
         "tsx": "^4.21.0",
         "typescript": "^5.9.3",
         "vitest": "^4.0.18"
