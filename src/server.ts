@@ -156,7 +156,7 @@ export class HttpServer {
         this.json(res, 404, { error: "Not Found" });
     }
 
-    private handleUpgrade(req: IncomingMessage, socket: import("node:net").Socket, head: Buffer): void {
+    private handleUpgrade(req: IncomingMessage, socket: import("node:stream").Duplex, head: Buffer): void {
         const url = new URL(req.url ?? "/", `http://localhost`);
 
         if (url.pathname !== "/attach") {

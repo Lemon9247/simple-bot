@@ -9,6 +9,7 @@
         "build": "tsc",
         "dev": "tsx src/main.ts",
         "start": "node dist/main.js",
+        "tui": "tsx src/tui/main.ts",
         "test": "vitest run",
         "test:watch": "vitest"
     },
