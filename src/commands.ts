@@ -1,4 +1,9 @@
+import { writeFileSync } from "node:fs";
+import yaml from "js-yaml";
 import type { Bridge } from "./bridge.js";
+import type { ConfigWatcher } from "./config-watcher.js";
+import { redactConfig, serializeConfig } from "./config.js";
+import type { Config } from "./types.js";
 
 export interface DaemonRef {
     getUptime(): number;
@@ -9,6 +14,8 @@ export interface DaemonRef {
         today: { inputTokens: number; outputTokens: number; cost: number; messageCount: number };
         week: { cost: number };
     } | null;
+    getConfigWatcher?(): ConfigWatcher | undefined;
+    getConfigPath?(): string | undefined;
 }
 
 export interface CommandContext {
@@ -207,8 +214,112 @@ export const thinkCommand: Command = {
     },
 };
 
+export const configCommand: Command = {
+    name: "config",
+    async execute({ args, reply, daemon }) {
+        const watcher = daemon?.getConfigWatcher?.();
+        if (!watcher) {
+            await reply("❌ Config watcher not available.");
+            return;
+        }
+
+        const config = watcher.getCurrentConfig();
+        const parts = args.trim().split(/\s+/).filter(Boolean);
+
+        // bot!config — show full config (redacted)
+        if (parts.length === 0) {
+            const redacted = redactConfig(config);
+            const yamlStr = yaml.dump(redacted, { lineWidth: -1, noRefs: true, sortKeys: true });
+            await reply(`📋 **Current config:**\n\`\`\`yaml\n${yamlStr}\`\`\``);
+            return;
+        }
+
+        const section = parts[0];
+        const configAny = config as Record<string, unknown>;
+
+        // bot!config <section> — show specific section
+        if (parts.length === 1) {
+            const sectionValue = configAny[section];
+            if (sectionValue === undefined) {
+                const available = Object.keys(configAny).join(", ");
+                await reply(`❌ Unknown section: \`${section}\`\nAvailable: ${available}`);
+                return;
+            }
+
+            // Redact the full config first, then extract the section
+            const redacted = redactConfig(config) as Record<string, unknown>;
+            const redactedSection = redacted[section];
+            const yamlStr = yaml.dump({ [section]: redactedSection }, { lineWidth: -1, noRefs: true });
+            await reply(`📋 **${section}:**\n\`\`\`yaml\n${yamlStr}\`\`\``);
+            return;
+        }
+
+        // bot!config <section> <key> <value> — update a value
+        if (parts.length >= 3) {
+            const key = parts[1];
+            const rawValue = parts.slice(2).join(" ");
+
+            const configPath = daemon?.getConfigPath?.();
+            if (!configPath) {
+                await reply("❌ Config path not available.");
+                return;
+            }
+
+            // Parse value: try JSON first (for booleans, numbers, arrays), fall back to string
+            let parsedValue: unknown;
+            try {
+                parsedValue = JSON.parse(rawValue);
+            } catch {
+                parsedValue = rawValue;
+            }
+
+            try {
+                // Build the update
+                const currentSection = configAny[section];
+                const updatedSection = currentSection && typeof currentSection === "object" && !Array.isArray(currentSection)
+                    ? { ...(currentSection as Record<string, unknown>), [key]: parsedValue }
+                    : { [key]: parsedValue };
+
+                const merged = { ...structuredClone(config), [section]: updatedSection } as Config;
+                const yamlStr = serializeConfig(merged);
+                writeFileSync(configPath, yamlStr, "utf-8");
+
+                await reply(`✅ Updated \`${section}.${key}\` = \`${rawValue}\``);
+            } catch (err) {
+                await reply(`❌ Failed to update config: ${String(err)}`);
+            }
+            return;
+        }
+
+        // bot!config <section> <key> — show specific key
+        if (parts.length === 2) {
+            const key = parts[1];
+            const sectionValue = configAny[section];
+
+            if (!sectionValue || typeof sectionValue !== "object") {
+                await reply(`❌ Section \`${section}\` not found or is not an object.`);
+                return;
+            }
+
+            const redacted = redactConfig(config) as Record<string, unknown>;
+            const redactedSection = redacted[section] as Record<string, unknown> | undefined;
+            const value = redactedSection?.[key];
+
+            if (value === undefined) {
+                const available = Object.keys(sectionValue as Record<string, unknown>).join(", ");
+                await reply(`❌ Key \`${key}\` not found in \`${section}\`.\nAvailable: ${available}`);
+                return;
+            }
+
+            const display = typeof value === "object" ? JSON.stringify(value) : String(value);
+            await reply(`📋 \`${section}.${key}\` = \`${display}\``);
+            return;
+        }
+    },
+};
+
 // Register the new commands
-commands.push(rebootCommand, statusCommand, thinkCommand);
-for (const cmd of [rebootCommand, statusCommand, thinkCommand]) {
+commands.push(rebootCommand, statusCommand, thinkCommand, configCommand);
+for (const cmd of [rebootCommand, statusCommand, thinkCommand, configCommand]) {
     commandMap.set(cmd.name, cmd);
 }
