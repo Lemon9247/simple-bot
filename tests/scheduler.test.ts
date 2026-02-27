@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtemp, writeFile, rm, unlink } from "node:fs/promises";
+import { mkdtemp, writeFile, mkdir, rm, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Scheduler } from "../src/scheduler.js";
@@ -44,7 +44,13 @@ describe("Scheduler", () => {
     });
 
     async function writeJob(name: string, content: string) {
-        await writeFile(join(cronDir, `${name}.md`), content);
+        const filePath = join(cronDir, `${name}.md`);
+        // Ensure parent directories exist for nested paths like "morning/checklist"
+        const dir = filePath.substring(0, filePath.lastIndexOf("/"));
+        if (dir !== cronDir) {
+            await mkdir(dir, { recursive: true });
+        }
+        await writeFile(filePath, content);
     }
 
     function getLastScheduledCallback() {
@@ -710,6 +716,157 @@ steps:
                 { type: "new-session" },
                 { type: "compact" },
             ]);
+
+            scheduler.stop();
+        });
+    });
+
+    describe("nested directories", () => {
+        it("discovers jobs in subdirectories", async () => {
+            await writeJob("morning/checklist", `---
+schedule: "0 7 * * *"
+steps:
+  - compact
+---`);
+            await writeJob("evening/report", `---
+schedule: "0 17 * * *"
+steps:
+  - compact
+---`);
+
+            const bridge = makeBridge();
+            const scheduler = new Scheduler({ dir: cronDir }, bridge);
+            await scheduler.start();
+
+            expect(scheduler.getJobs().size).toBe(2);
+            expect(scheduler.getJobs().has("morning/checklist")).toBe(true);
+            expect(scheduler.getJobs().has("evening/report")).toBe(true);
+
+            scheduler.stop();
+        });
+
+        it("uses path-based job names for nested files", async () => {
+            await writeJob("daily/maintenance/cleanup", `---
+schedule: "0 3 * * *"
+steps:
+  - compact
+---`);
+
+            const bridge = makeBridge();
+            const scheduler = new Scheduler({ dir: cronDir }, bridge);
+            await scheduler.start();
+
+            const jobs = scheduler.getJobs();
+            expect(jobs.has("daily/maintenance/cleanup")).toBe(true);
+            expect(jobs.get("daily/maintenance/cleanup")!.definition.name).toBe("daily/maintenance/cleanup");
+
+            scheduler.stop();
+        });
+
+        it("mixes flat and nested jobs", async () => {
+            await writeJob("root-job", `---
+schedule: "0 7 * * *"
+steps:
+  - compact
+---`);
+            await writeJob("morning/checklist", `---
+schedule: "0 8 * * *"
+steps:
+  - compact
+---`);
+
+            const bridge = makeBridge();
+            const scheduler = new Scheduler({ dir: cronDir }, bridge);
+            await scheduler.start();
+
+            const jobs = scheduler.getJobs();
+            expect(jobs.size).toBe(2);
+            expect(jobs.has("root-job")).toBe(true);
+            expect(jobs.has("morning/checklist")).toBe(true);
+
+            scheduler.stop();
+        });
+
+        it("executes nested job and includes path in CRON prefix", async () => {
+            await writeJob("morning/greet", `---
+schedule: "0 7 * * *"
+steps:
+  - prompt
+---
+
+Good morning!`);
+
+            const bridge = makeBridge();
+            const scheduler = new Scheduler({ dir: cronDir }, bridge);
+            await scheduler.start();
+
+            await getLastScheduledCallback()!();
+
+            expect(bridge.sendMessage).toHaveBeenCalledWith("[CRON:morning/greet] Good morning!");
+
+            scheduler.stop();
+        });
+
+        it("ignores non-.md files in subdirectories", async () => {
+            await mkdir(join(cronDir, "subdir"), { recursive: true });
+            await writeFile(join(cronDir, "subdir", "notes.txt"), "not a job");
+            await writeJob("subdir/real", `---
+schedule: "0 7 * * *"
+steps:
+  - compact
+---`);
+
+            const bridge = makeBridge();
+            const scheduler = new Scheduler({ dir: cronDir }, bridge);
+            await scheduler.start();
+
+            expect(scheduler.getJobs().size).toBe(1);
+            expect(scheduler.getJobs().has("subdir/real")).toBe(true);
+
+            scheduler.stop();
+        });
+
+        it("hot-reloads new jobs in subdirectories", async () => {
+            const bridge = makeBridge();
+            const scheduler = new Scheduler({ dir: cronDir }, bridge);
+            await scheduler.start();
+
+            expect(scheduler.getJobs().size).toBe(0);
+
+            await writeJob("morning/new-task", `---
+schedule: "0 9 * * *"
+steps:
+  - compact
+---`);
+
+            // Wait for debounce
+            await new Promise((r) => setTimeout(r, 500));
+
+            expect(scheduler.getJobs().size).toBe(1);
+            expect(scheduler.getJobs().has("morning/new-task")).toBe(true);
+
+            scheduler.stop();
+        });
+
+        it("hot-reloads deleted jobs in subdirectories", async () => {
+            await writeJob("morning/to-delete", `---
+schedule: "0 7 * * *"
+steps:
+  - compact
+---`);
+
+            const bridge = makeBridge();
+            const scheduler = new Scheduler({ dir: cronDir }, bridge);
+            await scheduler.start();
+
+            expect(scheduler.getJobs().size).toBe(1);
+
+            await unlink(join(cronDir, "morning", "to-delete.md"));
+
+            // Wait for debounce
+            await new Promise((r) => setTimeout(r, 500));
+
+            expect(scheduler.getJobs().size).toBe(0);
 
             scheduler.stop();
         });
