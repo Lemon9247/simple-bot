@@ -5,6 +5,9 @@
     "description": "A thin daemon that bridges Matrix (and other platforms) to a single pi instance via RPC",
     "type": "module",
     "license": "MIT",
+    "engines": {
+        "node": ">=22.0.0"
+    },
     "scripts": {
         "build": "tsc",
         "dev": "tsx src/main.ts",
