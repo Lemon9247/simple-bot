@@ -150,6 +150,14 @@ export class Daemon implements DaemonRef {
         }
 
         if (this.httpServer) {
+            // Wire WebSocket: forward bridge events to WS clients, route WS commands to bridge
+            this.httpServer.setWsHandler(async (msg: any) => {
+                const { type, ...params } = msg;
+                return this.bridge.command(type, params);
+            });
+            this.bridge.on("event", (event: any) => {
+                this.httpServer!.broadcastEvent(event);
+            });
             await this.httpServer.start();
         }
 
