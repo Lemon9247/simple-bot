@@ -3,6 +3,7 @@ import { basename } from "node:path";
 import { Bridge } from "./bridge.js";
 import type { ImageContent } from "./bridge.js";
 import { commandMap } from "./commands.js";
+import { Tracker } from "./tracker.js";
 import type { Config, Listener, IncomingMessage, MessageOrigin, ToolCallInfo, ToolEndInfo, JobDefinition, OutgoingFile, Attachment } from "./types.js";
 import type { Scheduler } from "./scheduler.js";
 import * as logger from "./logger.js";
@@ -41,6 +42,7 @@ export class Daemon {
     private bridge: Bridge;
     private listeners: Listener[] = [];
     private scheduler?: Scheduler;
+    private tracker: Tracker;
     private stopping = false;
     private commandRunning = false;
     private rateLimits = new Map<string, number[]>();
@@ -54,6 +56,7 @@ export class Daemon {
             args: config.pi.args,
         });
         this.scheduler = scheduler;
+        this.tracker = new Tracker(config.tracking);
     }
 
     getLastUserInteractionTime(): number {
@@ -68,12 +71,26 @@ export class Daemon {
         this.listeners.push(listener);
     }
 
+    getTracker(): Tracker {
+        return this.tracker;
+    }
+
     async start(): Promise<void> {
         this.bridge.start();
         this.bridge.on("exit", (code: number) => {
             if (this.stopping) return;
             logger.error("Pi exited unexpectedly, shutting down", { code });
             this.stop().then(() => process.exit(1));
+        });
+
+        // Load persisted usage log before processing events
+        await this.tracker.loadLog();
+
+        // Track usage on every agent_end event
+        this.bridge.on("event", (event: any) => {
+            if (event.type === "agent_end") {
+                this.recordUsage(event);
+            }
         });
 
         for (const listener of this.listeners) {
@@ -278,6 +295,49 @@ export class Daemon {
             return ["discord", roomId];
         }
         return [null, null];
+    }
+
+    private recordUsage(event: any): void {
+        // Extract usage data from agent_end event if available
+        const usage = event.usage ?? event.stats ?? {};
+        const model = usage.model ?? event.model ?? "unknown";
+        const inputTokens = usage.inputTokens ?? usage.input_tokens ?? 0;
+        const outputTokens = usage.outputTokens ?? usage.output_tokens ?? 0;
+        const contextSize = usage.contextSize ?? usage.context_size ?? usage.totalTokens ?? usage.total_tokens ?? 0;
+
+        // If event has no usage data at all, query get_state for context size
+        if (contextSize === 0 && this.bridge.running) {
+            this.bridge.command("get_state").then((state: any) => {
+                const ctxSize = state?.contextSize ?? state?.context_size ?? state?.totalTokens ?? 0;
+                const recorded = this.tracker.record({ model, inputTokens, outputTokens, contextSize: ctxSize });
+                logger.info("Usage recorded (via get_state)", {
+                    model: recorded.model,
+                    inputTokens: recorded.inputTokens,
+                    outputTokens: recorded.outputTokens,
+                    contextSize: recorded.contextSize,
+                    cost: recorded.cost.toFixed(6),
+                    compaction: recorded.compaction,
+                });
+            }).catch((err: Error) => {
+                // Still record with zero context if get_state fails
+                const recorded = this.tracker.record({ model, inputTokens, outputTokens, contextSize: 0 });
+                logger.warn("Usage recorded without context size", {
+                    model: recorded.model,
+                    error: String(err),
+                });
+            });
+            return;
+        }
+
+        const recorded = this.tracker.record({ model, inputTokens, outputTokens, contextSize });
+        logger.info("Usage recorded", {
+            model: recorded.model,
+            inputTokens: recorded.inputTokens,
+            outputTokens: recorded.outputTokens,
+            contextSize: recorded.contextSize,
+            cost: recorded.cost.toFixed(6),
+            compaction: recorded.compaction,
+        });
     }
 
     private async processAttachments(
