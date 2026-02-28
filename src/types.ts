@@ -55,6 +55,35 @@ export interface ServerConfig {
     publicDir?: string;
 }
 
+// ─── Session & Routing Types ──────────────────────────────────
+
+export type SessionState = "idle" | "starting" | "running" | "stopping";
+
+export interface SessionConfig {
+    pi: {
+        cwd: string;
+        command?: string;
+        args?: string[];
+        extensions?: string[];
+    };
+    idleTimeoutMinutes?: number;
+}
+
+export interface RoutingRule {
+    match: {
+        platform?: string;
+        channel?: string;
+    };
+    session: string;
+}
+
+export interface RoutingConfig {
+    rules: RoutingRule[];
+    default: string;
+}
+
+// ─── Main Config ──────────────────────────────────────────────
+
 export interface Config {
     pi: {
         cwd: string;
@@ -77,6 +106,9 @@ export interface Config {
     cron?: CronConfig;
     server?: ServerConfig;
     tracking?: TrackingConfig;
+    sessions?: Record<string, SessionConfig>;
+    defaultSession?: string;
+    routing?: RoutingConfig;
 }
 
 export interface CronConfig {

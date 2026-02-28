@@ -47,4 +47,59 @@ function validate(config: unknown): asserts config is Config {
             throw new Error("config: server.token is required");
         }
     }
+    validateSessions(c);
+    validateRouting(c);
+}
+
+function validateSessions(c: Record<string, any>): void {
+    if (!c.sessions) return;
+    if (typeof c.sessions !== "object" || Array.isArray(c.sessions)) {
+        throw new Error("config: sessions must be an object mapping session names to configs");
+    }
+    for (const [name, session] of Object.entries(c.sessions)) {
+        const s = session as Record<string, any>;
+        if (!s?.pi?.cwd) {
+            throw new Error(`config: sessions.${name}.pi.cwd is required`);
+        }
+    }
+    if (c.defaultSession && typeof c.defaultSession === "string") {
+        if (!c.sessions[c.defaultSession]) {
+            throw new Error(`config: defaultSession '${c.defaultSession}' not found in sessions`);
+        }
+    }
+}
+
+function validateRouting(c: Record<string, any>): void {
+    if (!c.routing) return;
+    const routing = c.routing;
+    if (typeof routing !== "object" || Array.isArray(routing)) {
+        throw new Error("config: routing must be an object with rules and default");
+    }
+    // Determine available session names
+    const sessionNames = c.sessions
+        ? new Set(Object.keys(c.sessions))
+        : new Set(["main"]);
+
+    if (routing.default && typeof routing.default === "string") {
+        if (!sessionNames.has(routing.default)) {
+            throw new Error(`config: routing.default '${routing.default}' not found in sessions`);
+        }
+    }
+    if (routing.rules) {
+        if (!Array.isArray(routing.rules)) {
+            throw new Error("config: routing.rules must be an array");
+        }
+        for (let i = 0; i < routing.rules.length; i++) {
+            const rule = routing.rules[i];
+            if (!rule.session || typeof rule.session !== "string") {
+                throw new Error(`config: routing.rules[${i}].session is required`);
+            }
+            if (!sessionNames.has(rule.session)) {
+                throw new Error(`config: routing.rules[${i}].session '${rule.session}' not found in sessions`);
+            }
+            if (!rule.match || typeof rule.match !== "object") {
+                throw new Error(`config: routing.rules[${i}].match is required`);
+            }
+        }
+    }
 }

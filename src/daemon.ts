@@ -4,6 +4,7 @@ import { Bridge } from "./bridge.js";
 import type { ImageContent } from "./bridge.js";
 import { commandMap } from "./commands.js";
 import type { DaemonRef } from "./commands.js";
+import { SessionManager } from "./session-manager.js";
 import { Tracker } from "./tracker.js";
 import type { Config, Listener, IncomingMessage, MessageOrigin, ToolCallInfo, ToolEndInfo, JobDefinition, OutgoingFile, Attachment, WebhookRequest, WebhookResult, ActivityEntry } from "./types.js";
 import type { Scheduler } from "./scheduler.js";
@@ -44,7 +45,7 @@ function formatToolCall(info: ToolCallInfo): string {
 
 export class Daemon implements DaemonRef, DashboardProvider {
     private config: Config;
-    private bridge: Bridge;
+    private sessionManager: SessionManager;
     private listeners: Listener[] = [];
     private scheduler?: Scheduler;
     private httpServer?: HttpServer;
@@ -57,14 +58,9 @@ export class Daemon implements DaemonRef, DashboardProvider {
     private thinkingEnabled = false;
     private activityBuffer: ActivityEntry[] = [];
 
-    constructor(config: Config, bridge?: Bridge, scheduler?: Scheduler) {
+    constructor(config: Config, sessionManager?: SessionManager) {
         this.config = config;
-        this.bridge = bridge ?? new Bridge({
-            cwd: config.pi.cwd,
-            command: config.pi.command,
-            args: config.pi.args,
-        });
-        this.scheduler = scheduler;
+        this.sessionManager = sessionManager ?? new SessionManager(config);
         this.tracker = new Tracker(config.tracking);
 
         if (config.server) {
@@ -112,6 +108,10 @@ export class Daemon implements DaemonRef, DashboardProvider {
 
     setScheduler(scheduler: Scheduler): void {
         this.scheduler = scheduler;
+    }
+
+    getSessionManager(): SessionManager {
+        return this.sessionManager;
     }
 
     addListener(listener: Listener): void {
@@ -190,20 +190,29 @@ export class Daemon implements DaemonRef, DashboardProvider {
     }
 
     async start(): Promise<void> {
-        this.bridge.start();
-        this.bridge.on("exit", (code: number) => {
-            if (this.stopping) return;
-            logger.error("Pi exited unexpectedly, shutting down", { code });
-            this.stop().then(() => process.exit(1));
-        });
-
         // Load persisted usage log before processing events
         await this.tracker.loadLog();
 
-        // Track usage on every agent_end event
-        this.bridge.on("event", (event: any) => {
+        // Track usage and forward events from all sessions
+        this.sessionManager.on("session:event", (_sessionName: string, event: any) => {
             if (event.type === "agent_end") {
-                this.recordUsage(event);
+                this.recordUsage(event, _sessionName);
+            }
+            // Forward all session events to WebSocket clients
+            if (this.httpServer) {
+                this.httpServer.broadcastEvent(event);
+            }
+        });
+
+        // Handle unexpected session exits
+        this.sessionManager.on("session:exit", (sessionName: string, code: number) => {
+            if (this.stopping) return;
+            // For single-session (backward compat), crash like before
+            if (this.sessionManager.getSessionNames().length === 1) {
+                logger.error("Pi exited unexpectedly, shutting down", { session: sessionName, code });
+                this.stop().then(() => process.exit(1));
+            } else {
+                logger.warn("Session exited unexpectedly", { session: sessionName, code });
             }
         });
 
@@ -222,18 +231,20 @@ export class Daemon implements DaemonRef, DashboardProvider {
         }
 
         if (this.httpServer) {
-            // Wire WebSocket: forward bridge events to WS clients, route WS commands to bridge
+            // Wire WebSocket: forward WS commands to the appropriate session's bridge
             this.httpServer.setWsHandler(async (msg: any) => {
-                const { type, ...params } = msg;
-                return this.bridge.command(type, params);
-            });
-            this.bridge.on("event", (event: any) => {
-                this.httpServer!.broadcastEvent(event);
+                const { type, session, ...params } = msg;
+                const sessionName = session ?? this.sessionManager.getDefaultSessionName();
+                const bridge = await this.sessionManager.getOrStartSession(sessionName);
+                return bridge.command(type, params);
             });
             await this.httpServer.start();
         }
 
-        logger.info("simple-bot started", { listeners: this.listeners.length });
+        logger.info("simple-bot started", {
+            listeners: this.listeners.length,
+            sessions: this.sessionManager.getSessionNames(),
+        });
     }
 
     async stop(): Promise<void> {
@@ -247,7 +258,7 @@ export class Daemon implements DaemonRef, DashboardProvider {
         for (const listener of this.listeners) {
             await listener.disconnect().catch(() => {});
         }
-        await this.bridge.stop();
+        await this.sessionManager.stopAll();
     }
 
     private parseCommand(text: string): { name: string; args: string } | null {
@@ -291,19 +302,32 @@ export class Daemon implements DaemonRef, DashboardProvider {
             if (listener) await listener.send(origin, text).catch(() => {});
         };
 
+        // Resolve which session this message routes to
+        const sessionName = this.sessionManager.resolveSession(msg.platform, msg.channel);
+
         // Handle bot commands before passing to the agent
         const parsed = this.parseCommand(msg.text);
         if (parsed) {
             const command = commandMap.get(parsed.name)!;
-            logger.info("Handling command", { command: parsed.name, sender: msg.sender });
+            logger.info("Handling command", { command: parsed.name, sender: msg.sender, session: sessionName });
+
+            // Get the bridge for this session (lazy start)
+            let bridge: Bridge;
+            try {
+                bridge = await this.sessionManager.getOrStartSession(sessionName);
+            } catch (err) {
+                logger.error("Failed to get session for command", { session: sessionName, error: String(err) });
+                await reply(`❌ Session error: ${String(err)}`);
+                return;
+            }
 
             if (command.interrupts) {
-                this.bridge.cancelPending(`Interrupted by bot!${parsed.name}`);
+                bridge.cancelPending(`Interrupted by bot!${parsed.name}`);
             }
 
             this.commandRunning = true;
             try {
-                await command.execute({ args: parsed.args, bridge: this.bridge, reply, daemon: this });
+                await command.execute({ args: parsed.args, bridge, reply, daemon: this });
             } catch (err) {
                 logger.error("Command failed", { command: parsed.name, error: String(err) });
                 await reply(`❌ Command failed: ${String(err)}`);
@@ -329,10 +353,22 @@ export class Daemon implements DaemonRef, DashboardProvider {
             return;
         }
 
+        // Get the bridge for this session (lazy start)
+        let bridge: Bridge;
+        try {
+            bridge = await this.sessionManager.getOrStartSession(sessionName);
+        } catch (err) {
+            logger.error("Failed to get session", { session: sessionName, error: String(err) });
+            return;
+        }
+
+        // Record activity on the session (resets idle timer)
+        this.sessionManager.recordActivity(sessionName);
+
         // If the agent is mid-chain, steer instead of queuing a new prompt
-        if (this.bridge.busy) {
-            logger.info("Steering active agent", { sender: msg.sender });
-            this.bridge.steer(promptText);
+        if (bridge.busy) {
+            logger.info("Steering active agent", { sender: msg.sender, session: sessionName });
+            bridge.steer(promptText);
             return;
         }
 
@@ -345,7 +381,7 @@ export class Daemon implements DaemonRef, DashboardProvider {
         const activityStart = Date.now();
 
         try {
-            const response = await this.bridge.sendMessage(promptText, {
+            const response = await bridge.sendMessage(promptText, {
                 images: images.length > 0 ? images : undefined,
                 onToolStart: (info) => {
                     if (!listener) return;
@@ -381,7 +417,7 @@ export class Daemon implements DaemonRef, DashboardProvider {
                 await listener.send(origin, response, pendingFiles.length > 0 ? pendingFiles : undefined);
             }
         } catch (err) {
-            logger.error("Failed to process message", { error: String(err) });
+            logger.error("Failed to process message", { error: String(err), session: sessionName });
         } finally {
             this.recordActivity(msg, Date.now() - activityStart);
             clearInterval(typingInterval);
@@ -395,12 +431,24 @@ export class Daemon implements DaemonRef, DashboardProvider {
     }
 
     private async handleWebhook(req: WebhookRequest): Promise<WebhookResult> {
+        // Resolve session: use req.session if provided, otherwise default
+        const sessionName = req.session ?? this.sessionManager.getDefaultSessionName();
+
+        let bridge: Bridge;
+        try {
+            bridge = await this.sessionManager.getOrStartSession(sessionName);
+        } catch (err) {
+            return { ok: false, error: `Session error: ${String(err)}` };
+        }
+
+        this.sessionManager.recordActivity(sessionName);
+
         const prefix = req.source ? `[webhook ${req.source}]` : `[webhook]`;
         const prompt = `${prefix} ${req.message}`;
 
-        if (this.bridge.busy) {
+        if (bridge.busy) {
             // Fire-and-forget: the bridge queues it with followUp behavior
-            this.bridge.sendMessage(prompt).then((response) => {
+            bridge.sendMessage(prompt).then((response) => {
                 if (req.notify) {
                     this.sendToRoom(req.notify, response, `webhook:${req.source ?? "unknown"}`).catch((err) => {
                         logger.error("Failed to send queued webhook response", { error: String(err) });
@@ -413,7 +461,7 @@ export class Daemon implements DaemonRef, DashboardProvider {
             return { ok: true, queued: true };
         }
 
-        const response = await this.bridge.sendMessage(prompt);
+        const response = await bridge.sendMessage(prompt);
 
         if (req.notify) {
             await this.sendToRoom(req.notify, response, `webhook:${req.source ?? "unknown"}`);
@@ -459,7 +507,7 @@ export class Daemon implements DaemonRef, DashboardProvider {
         return [null, null];
     }
 
-    private recordUsage(event: any): void {
+    private recordUsage(event: any, sessionName: string): void {
         // Extract usage data from agent_end event if available
         const usage = event.usage ?? event.stats ?? {};
         const model = usage.model ?? event.model ?? "unknown";
@@ -468,11 +516,13 @@ export class Daemon implements DaemonRef, DashboardProvider {
         const contextSize = usage.contextSize ?? usage.context_size ?? usage.totalTokens ?? usage.total_tokens ?? 0;
 
         // If event has no usage data at all, query get_state for context size
-        if (contextSize === 0 && this.bridge.running) {
-            this.bridge.command("get_state").then((state: any) => {
+        const bridge = this.sessionManager.getSession(sessionName);
+        if (contextSize === 0 && bridge?.running) {
+            bridge.command("get_state").then((state: any) => {
                 const ctxSize = state?.contextSize ?? state?.context_size ?? state?.totalTokens ?? 0;
                 const recorded = this.tracker.record({ model, inputTokens, outputTokens, contextSize: ctxSize });
                 logger.info("Usage recorded (via get_state)", {
+                    session: sessionName,
                     model: recorded.model,
                     inputTokens: recorded.inputTokens,
                     outputTokens: recorded.outputTokens,
@@ -484,6 +534,7 @@ export class Daemon implements DaemonRef, DashboardProvider {
                 // Still record with zero context if get_state fails
                 const recorded = this.tracker.record({ model, inputTokens, outputTokens, contextSize: 0 });
                 logger.warn("Usage recorded without context size", {
+                    session: sessionName,
                     model: recorded.model,
                     inputTokens: recorded.inputTokens,
                     outputTokens: recorded.outputTokens,
@@ -496,6 +547,7 @@ export class Daemon implements DaemonRef, DashboardProvider {
 
         const recorded = this.tracker.record({ model, inputTokens, outputTokens, contextSize });
         logger.info("Usage recorded", {
+            session: sessionName,
             model: recorded.model,
             inputTokens: recorded.inputTokens,
             outputTokens: recorded.outputTokens,
