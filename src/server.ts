@@ -3,7 +3,10 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { join, extname, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
+import { writeFileSync } from "node:fs";
 import type { ServerConfig, WebhookHandler, ActivityEntry } from "./types.js";
+import type { ConfigWatcher } from "./config-watcher.js";
+import { redactConfig, mergeConfig, serializeConfig, loadConfig } from "./config.js";
 import * as logger from "./logger.js";
 
 export interface DashboardProvider {
@@ -48,6 +51,8 @@ export class HttpServer {
     private startTime: number;
     private routes = new Map<string, Map<string, RouteHandler>>();
     private webhookHandler?: WebhookHandler;
+    private configWatcher?: ConfigWatcher;
+    private configPath?: string;
     private webhookRateLimits = new Map<string, number[]>();
     private dashboard: DashboardProvider | null;
     private wss: WebSocketServer;
@@ -130,6 +135,11 @@ export class HttpServer {
         this.webhookHandler = handler;
     }
 
+    setConfigWatcher(watcher: ConfigWatcher, configPath: string): void {
+        this.configWatcher = watcher;
+        this.configPath = configPath;
+    }
+
     private registerRoutes(): void {
         this.route("GET", "/api/ping", (_req, res) => {
             this.json(res, 200, { pong: true });
@@ -188,6 +198,56 @@ export class HttpServer {
                 return;
             }
             this.json(res, 200, { entries: this.dashboard.getLogs() });
+        });
+
+        // ─── Config API ────────────────────────────────────────────
+
+        this.route("GET", "/api/config", (_req, res) => {
+            if (!this.configWatcher) {
+                this.json(res, 503, { error: "Config watcher not configured" });
+                return;
+            }
+            const config = this.configWatcher.getCurrentConfig();
+            this.json(res, 200, redactConfig(config));
+        });
+
+        this.route("POST", "/api/config", async (req, res) => {
+            if (!this.configWatcher || !this.configPath) {
+                this.json(res, 503, { error: "Config watcher not configured" });
+                return;
+            }
+
+            let body: Record<string, unknown>;
+            try {
+                body = await this.readJsonBody(req);
+            } catch {
+                this.json(res, 400, { error: "Invalid JSON body" });
+                return;
+            }
+
+            if (!body || typeof body !== "object" || Array.isArray(body)) {
+                this.json(res, 400, { error: "Body must be a JSON object" });
+                return;
+            }
+
+            try {
+                const current = this.configWatcher.getCurrentConfig();
+                const merged = mergeConfig(current, body);
+
+                // Validate by round-tripping through loadConfig-style validation
+                // Write to file first, then let the watcher pick up the change
+                const yamlStr = serializeConfig(merged);
+                writeFileSync(this.configPath, yamlStr, "utf-8");
+
+                // Validate the written file can be loaded (catches env var issues etc.)
+                loadConfig(this.configPath);
+
+                logger.info("Config updated via API", { sections: Object.keys(body) });
+                this.json(res, 200, { ok: true, config: redactConfig(merged) });
+            } catch (err) {
+                logger.error("Config API update failed", { error: String(err) });
+                this.json(res, 400, { error: `Invalid config: ${String(err)}` });
+            }
         });
 
         this.route("POST", "/api/webhook", async (req, res) => {

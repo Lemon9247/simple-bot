@@ -178,3 +178,32 @@ export interface JobDefinition {
     gracePeriodMs?: number;  // per-job override; undefined = use global default
     body: string;
 }
+
+// ─── Config Reload Types ──────────────────────────────────────
+
+/** Describes a single config field that changed */
+export interface ConfigChange {
+    section: string;
+    key: string;
+    oldValue: unknown;
+    newValue: unknown;
+    hotReloadable: boolean;
+}
+
+/** Result of diffing two configs */
+export interface ConfigDiff {
+    changes: ConfigChange[];
+    hasRestartRequired: boolean;
+    hasHotReloadable: boolean;
+}
+
+/** Config with sensitive fields redacted */
+export type ConfigRedacted = {
+    [K in keyof Config]: K extends "discord"
+        ? { token: string } | undefined
+        : K extends "matrix"
+          ? { homeserver: string; user: string; token: string; storage_path?: string } | undefined
+          : K extends "server"
+            ? { port: number; token: string; publicDir?: string } | undefined
+            : Config[K];
+};
