@@ -520,7 +520,7 @@ export class Daemon implements DaemonRef, DashboardProvider {
         if (contextSize === 0 && bridge?.running) {
             bridge.command("get_state").then((state: any) => {
                 const ctxSize = state?.contextSize ?? state?.context_size ?? state?.totalTokens ?? 0;
-                const recorded = this.tracker.record({ model, inputTokens, outputTokens, contextSize: ctxSize });
+                const recorded = this.tracker.record({ model, inputTokens, outputTokens, contextSize: ctxSize, sessionName });
                 logger.info("Usage recorded (via get_state)", {
                     session: sessionName,
                     model: recorded.model,
@@ -532,7 +532,7 @@ export class Daemon implements DaemonRef, DashboardProvider {
                 });
             }).catch((err: Error) => {
                 // Still record with zero context if get_state fails
-                const recorded = this.tracker.record({ model, inputTokens, outputTokens, contextSize: 0 });
+                const recorded = this.tracker.record({ model, inputTokens, outputTokens, contextSize: 0, sessionName });
                 logger.warn("Usage recorded without context size", {
                     session: sessionName,
                     model: recorded.model,
@@ -545,7 +545,7 @@ export class Daemon implements DaemonRef, DashboardProvider {
             return;
         }
 
-        const recorded = this.tracker.record({ model, inputTokens, outputTokens, contextSize });
+        const recorded = this.tracker.record({ model, inputTokens, outputTokens, contextSize, sessionName });
         logger.info("Usage recorded", {
             session: sessionName,
             model: recorded.model,
