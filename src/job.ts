@@ -120,5 +120,13 @@ export function parseJobContent(content: string, filePath: string, baseDir?: str
         gracePeriodMs = data.gracePeriodMs;
     }
 
-    return { name, file: filePath, schedule: data.schedule, steps, notify, enabled, gracePeriodMs, body: body.trim() };
+    let session: string | undefined;
+    if (data.session !== undefined) {
+        if (typeof data.session !== "string" || !data.session.trim()) {
+            throw new JobParseError(filePath, "session must be a non-empty string");
+        }
+        session = data.session.trim();
+    }
+
+    return { name, file: filePath, schedule: data.schedule, steps, notify, enabled, gracePeriodMs, session, body: body.trim() };
 }

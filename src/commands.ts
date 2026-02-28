@@ -2,14 +2,15 @@ import { writeFileSync } from "node:fs";
 import yaml from "js-yaml";
 import type { Bridge } from "./bridge.js";
 import type { ConfigWatcher } from "./config-watcher.js";
+import type { SessionManager } from "./session-manager.js";
 import { redactConfig, serializeConfig } from "./config.js";
 import type { Config } from "./types.js";
 
 export interface DaemonRef {
     getUptime(): number;
     getSchedulerStatus(): { total: number; enabled: number; names: string[] };
-    getThinkingEnabled(): boolean;
-    setThinkingEnabled(enabled: boolean): void;
+    getThinkingEnabled(sessionName?: string): boolean;
+    setThinkingEnabled(sessionName: string, enabled: boolean): void;
     getUsageStats(): {
         today: { inputTokens: number; outputTokens: number; cost: number; messageCount: number };
         week: { cost: number };
@@ -23,6 +24,8 @@ export interface CommandContext {
     bridge: Bridge;
     reply: (text: string) => Promise<void>;
     daemon?: DaemonRef;
+    sessionName?: string;
+    sessionManager?: SessionManager;
 }
 
 export interface Command {
@@ -130,16 +133,69 @@ export const commandMap = new Map<string, Command>(
 export const rebootCommand: Command = {
     name: "reboot",
     interrupts: true,
-    async execute({ bridge, reply }) {
-        await reply("🔄 Rebooting pi process...");
-        await bridge.restart();
-        await reply("✅ Rebooted.");
+    async execute({ args, bridge, reply, sessionName, sessionManager }) {
+        const target = args.trim().toLowerCase();
+
+        if (!target) {
+            // bot!reboot — reboot the resolved session for this channel
+            const name = sessionName ?? "main";
+            await reply(`🔄 Rebooting session **${name}**...`);
+            await bridge.restart();
+            await reply(`✅ Session **${name}** rebooted.`);
+            return;
+        }
+
+        if (!sessionManager) {
+            // Fallback: no session manager, just reboot the current bridge
+            await reply("🔄 Rebooting pi process...");
+            await bridge.restart();
+            await reply("✅ Rebooted.");
+            return;
+        }
+
+        if (target === "all") {
+            // bot!reboot all — reboot all sessions
+            const names = sessionManager.getSessionNames();
+            const running = names.filter((n) => sessionManager.getSession(n) !== null);
+            if (running.length === 0) {
+                await reply("ℹ️ No sessions are currently running.");
+                return;
+            }
+            await reply(`🔄 Rebooting ${running.length} session(s)...`);
+            const results: string[] = [];
+            for (const name of running) {
+                try {
+                    await sessionManager.stopSession(name);
+                    await sessionManager.getOrStartSession(name);
+                    results.push(`✅ **${name}**`);
+                } catch (err) {
+                    results.push(`❌ **${name}**: ${String(err)}`);
+                }
+            }
+            await reply(results.join("\n"));
+            return;
+        }
+
+        // bot!reboot <name> — reboot a specific session
+        const names = sessionManager.getSessionNames();
+        if (!names.includes(target)) {
+            await reply(`❌ Unknown session: \`${target}\`. Available: ${names.join(", ")}`);
+            return;
+        }
+        await reply(`🔄 Rebooting session **${target}**...`);
+        try {
+            await sessionManager.stopSession(target);
+            await sessionManager.getOrStartSession(target);
+            await reply(`✅ Session **${target}** rebooted.`);
+        } catch (err) {
+            await reply(`❌ Failed to reboot session **${target}**: ${String(err)}`);
+        }
     },
 };
 
 export const statusCommand: Command = {
     name: "status",
-    async execute({ bridge, reply, daemon }) {
+    async execute({ bridge, reply, daemon, sessionName, sessionManager }) {
         const uptimeStr = daemon ? formatUptime(daemon.getUptime()) : "unknown";
 
         // Get model and context info via get_state RPC (P3-T4)
@@ -179,37 +235,72 @@ export const statusCommand: Command = {
         if (usageLine) lines.splice(1, 0, usageLine);
         if (cronLine) lines.splice(usageLine ? 2 : 1, 0, cronLine.trim());
 
+        // Show session info when multiple sessions are configured
+        if (sessionManager) {
+            const names = sessionManager.getSessionNames();
+            if (names.length > 1) {
+                const currentSession = sessionName ?? sessionManager.getDefaultSessionName();
+                const sessionLines: string[] = [];
+                for (const name of names) {
+                    const info = sessionManager.getSessionInfo(name);
+                    const stateIcon = info?.state === "running" ? "🟢" : info?.state === "starting" ? "🟡" : "⚪";
+                    const currentMarker = name === currentSession ? " ← this channel" : "";
+                    let sessionDetail = `  ${stateIcon} **${name}**${currentMarker}`;
+
+                    // Get per-session model/context if running
+                    if (info?.state === "running" && info.bridge) {
+                        try {
+                            const sessionState = await info.bridge.command("get_state");
+                            const sModel = sessionState?.model?.name ?? "unknown";
+                            const sCtx = sessionState?.contextTokens != null
+                                ? `~${Math.round(sessionState.contextTokens / 1000)}k`
+                                : "?";
+                            sessionDetail += ` | ${sModel} | ${sCtx} tokens`;
+                        } catch {
+                            sessionDetail += " | (not responding)";
+                        }
+                    }
+
+                    sessionLines.push(sessionDetail);
+                }
+                lines.push("");
+                lines.push(`📡 Sessions (${names.length}):`);
+                lines.push(...sessionLines);
+            }
+        }
+
         await reply(lines.join("\n"));
     },
 };
 
 export const thinkCommand: Command = {
     name: "think",
-    async execute({ args, bridge, reply, daemon }) {
+    async execute({ args, bridge, reply, daemon, sessionName }) {
         if (!daemon) {
             await reply("❌ Daemon reference not available.");
             return;
         }
+        const name = sessionName ?? "main";
         const arg = args.toLowerCase().trim();
         if (arg === "on") {
             try {
                 await bridge.command("set_model_config", { thinking: true });
-                daemon.setThinkingEnabled(true);
-                await reply("🧠 Extended thinking **enabled**.");
+                daemon.setThinkingEnabled(name, true);
+                await reply(`🧠 Extended thinking **enabled** for session **${name}**.`);
             } catch (err) {
                 await reply(`❌ Failed to enable thinking: ${String(err)}`);
             }
         } else if (arg === "off") {
             try {
                 await bridge.command("set_model_config", { thinking: false });
-                daemon.setThinkingEnabled(false);
-                await reply("🧠 Extended thinking **disabled**.");
+                daemon.setThinkingEnabled(name, false);
+                await reply(`🧠 Extended thinking **disabled** for session **${name}**.`);
             } catch (err) {
                 await reply(`❌ Failed to disable thinking: ${String(err)}`);
             }
         } else {
-            const state = daemon.getThinkingEnabled() ? "on" : "off";
-            await reply(`🧠 Extended thinking is currently **${state}**.\nUsage: \`bot!think on|off\``);
+            const state = daemon.getThinkingEnabled(name) ? "on" : "off";
+            await reply(`🧠 Extended thinking is currently **${state}** for session **${name}**.\nUsage: \`bot!think on|off\``);
         }
     },
 };

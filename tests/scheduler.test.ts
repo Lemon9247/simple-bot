@@ -871,4 +871,160 @@ steps:
             scheduler.stop();
         });
     });
+
+    describe("session-aware execution", () => {
+        function makeSessionManager(bridges: Record<string, ReturnType<typeof makeBridge>>) {
+            const defaultSession = Object.keys(bridges)[0] ?? "main";
+            return {
+                getDefaultSessionName: vi.fn().mockReturnValue(defaultSession),
+                getOrStartSession: vi.fn().mockImplementation((name: string) => {
+                    const bridge = bridges[name];
+                    if (!bridge) return Promise.reject(new Error(`Unknown session: ${name}`));
+                    return Promise.resolve(bridge);
+                }),
+            } as any;
+        }
+
+        it("routes job to specified session", async () => {
+            await writeJob("work-task", `---
+schedule: "0 7 * * *"
+session: work
+steps:
+  - compact
+---`);
+
+            const mainBridge = makeBridge();
+            const workBridge = makeBridge();
+            const sm = makeSessionManager({ main: mainBridge, work: workBridge });
+
+            const scheduler = new Scheduler({ dir: cronDir }, mainBridge);
+            scheduler.setSessionManager(sm);
+            await scheduler.start();
+
+            await getLastScheduledCallback()!();
+
+            // Should have used the work session bridge, not main
+            expect(workBridge.command).toHaveBeenCalledWith("compact");
+            expect(mainBridge.command).not.toHaveBeenCalled();
+            expect(sm.getOrStartSession).toHaveBeenCalledWith("work");
+
+            scheduler.stop();
+        });
+
+        it("routes job to default session when no session specified", async () => {
+            await writeJob("default-task", `---
+schedule: "0 7 * * *"
+steps:
+  - compact
+---`);
+
+            const mainBridge = makeBridge();
+            const sm = makeSessionManager({ main: mainBridge });
+
+            const scheduler = new Scheduler({ dir: cronDir }, mainBridge);
+            scheduler.setSessionManager(sm);
+            await scheduler.start();
+
+            await getLastScheduledCallback()!();
+
+            expect(mainBridge.command).toHaveBeenCalledWith("compact");
+            expect(sm.getOrStartSession).toHaveBeenCalledWith("main");
+
+            scheduler.stop();
+        });
+
+        it("handles unknown session gracefully", async () => {
+            await writeJob("bad-session", `---
+schedule: "0 7 * * *"
+session: nonexistent
+steps:
+  - compact
+---`);
+
+            const mainBridge = makeBridge();
+            const sm = makeSessionManager({ main: mainBridge });
+
+            const scheduler = new Scheduler({ dir: cronDir }, mainBridge);
+            scheduler.setSessionManager(sm);
+            await scheduler.start();
+
+            // Should not throw
+            await getLastScheduledCallback()!();
+
+            // No commands should have been sent
+            expect(mainBridge.command).not.toHaveBeenCalled();
+
+            scheduler.stop();
+        });
+
+        it("sends prompt to session-specific bridge", async () => {
+            await writeJob("work-prompt", `---
+schedule: "0 7 * * *"
+session: work
+steps:
+  - prompt
+---
+
+Do work stuff.`);
+
+            const mainBridge = makeBridge();
+            const workBridge = makeBridge();
+            const sm = makeSessionManager({ main: mainBridge, work: workBridge });
+
+            const scheduler = new Scheduler({ dir: cronDir }, mainBridge);
+            scheduler.setSessionManager(sm);
+            await scheduler.start();
+
+            await getLastScheduledCallback()!();
+
+            expect(workBridge.sendMessage).toHaveBeenCalledWith("[CRON:work-prompt] Do work stuff.");
+            expect(mainBridge.sendMessage).not.toHaveBeenCalled();
+
+            scheduler.stop();
+        });
+
+        it("falls back to direct bridge when no session manager", async () => {
+            await writeJob("no-sm", `---
+schedule: "0 7 * * *"
+session: work
+steps:
+  - compact
+---`);
+
+            const bridge = makeBridge();
+            // No setSessionManager call — uses direct bridge
+            const scheduler = new Scheduler({ dir: cronDir }, bridge);
+            await scheduler.start();
+
+            await getLastScheduledCallback()!();
+
+            // Should use the direct bridge regardless of session field
+            expect(bridge.command).toHaveBeenCalledWith("compact");
+
+            scheduler.stop();
+        });
+
+        it("skips session job when that session's bridge is busy", async () => {
+            await writeJob("busy-session", `---
+schedule: "0 7 * * *"
+session: work
+steps:
+  - compact
+---`);
+
+            const mainBridge = makeBridge();
+            const workBridge = makeBridge({ busy: true });
+            const sm = makeSessionManager({ main: mainBridge, work: workBridge });
+
+            const scheduler = new Scheduler({ dir: cronDir }, mainBridge);
+            scheduler.setSessionManager(sm);
+            await scheduler.start();
+
+            await getLastScheduledCallback()!();
+
+            expect(workBridge.command).not.toHaveBeenCalled();
+
+            scheduler.stop();
+        });
+    });
 });

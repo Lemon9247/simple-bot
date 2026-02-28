@@ -44,6 +44,7 @@ if (config.cron) {
             defaultBridge,
             () => daemon.getLastUserInteractionTime()
         );
+        scheduler.setSessionManager(sessionManager);
         daemon.setScheduler(scheduler);
     })().catch((err) => {
         logger.error("Failed to initialize scheduler", { error: String(err) });

@@ -55,7 +55,7 @@ export class Daemon implements DaemonRef, DashboardProvider {
     private rateLimits = new Map<string, number[]>();
     private lastUserInteractionTime = 0;
     private startedAt = Date.now();
-    private thinkingEnabled = false;
+    private thinkingEnabled = new Map<string, boolean>();
     private activityBuffer: ActivityEntry[] = [];
 
     constructor(config: Config, sessionManager?: SessionManager) {
@@ -89,12 +89,13 @@ export class Daemon implements DaemonRef, DashboardProvider {
         return { total: names.length, enabled, names };
     }
 
-    getThinkingEnabled(): boolean {
-        return this.thinkingEnabled;
+    getThinkingEnabled(sessionName?: string): boolean {
+        const name = sessionName ?? this.sessionManager.getDefaultSessionName();
+        return this.thinkingEnabled.get(name) ?? false;
     }
 
-    setThinkingEnabled(enabled: boolean): void {
-        this.thinkingEnabled = enabled;
+    setThinkingEnabled(sessionName: string, enabled: boolean): void {
+        this.thinkingEnabled.set(sessionName, enabled);
     }
 
     getUsageStats(): {
@@ -327,7 +328,14 @@ export class Daemon implements DaemonRef, DashboardProvider {
 
             this.commandRunning = true;
             try {
-                await command.execute({ args: parsed.args, bridge, reply, daemon: this });
+                await command.execute({
+                    args: parsed.args,
+                    bridge,
+                    reply,
+                    daemon: this,
+                    sessionName,
+                    sessionManager: this.sessionManager,
+                });
             } catch (err) {
                 logger.error("Command failed", { command: parsed.name, error: String(err) });
                 await reply(`❌ Command failed: ${String(err)}`);
