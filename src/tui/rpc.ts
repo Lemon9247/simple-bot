@@ -15,13 +15,15 @@ export interface RpcClientEvents {
 export class RpcClient extends EventEmitter<RpcClientEvents> {
     private ws: WebSocket | null = null;
     private url: string;
+    private sessionName?: string;
     private pending = new Map<string, { resolve: (data: any) => void; reject: (err: Error) => void }>();
     private shouldReconnect = true;
     private reconnectTimer?: ReturnType<typeof setTimeout>;
 
-    constructor(host: string, port: number, token: string) {
+    constructor(host: string, port: number, token: string, session?: string) {
         super();
         this.url = `ws://${host}:${port}/attach?token=${encodeURIComponent(token)}`;
+        this.sessionName = session;
     }
 
     get connected(): boolean {
@@ -86,8 +88,15 @@ export class RpcClient extends EventEmitter<RpcClientEvents> {
         const id = crypto.randomUUID();
         return new Promise((resolve, reject) => {
             this.pending.set(id, { resolve, reject });
-            this.ws!.send(JSON.stringify({ id, type, ...params }));
+            const msg: Record<string, unknown> = { id, type, ...params };
+            if (this.sessionName) msg.session = this.sessionName;
+            this.ws!.send(JSON.stringify(msg));
         });
+    }
+
+    /** Get the configured session name, if any */
+    getSession(): string | undefined {
+        return this.sessionName;
     }
 
     private handleMessage(raw: string): void {

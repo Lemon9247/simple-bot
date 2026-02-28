@@ -9,6 +9,14 @@ import type { ConfigWatcher } from "./config-watcher.js";
 import { redactConfig, mergeConfig, serializeConfig, loadConfig } from "./config.js";
 import * as logger from "./logger.js";
 
+export interface SessionStateInfo {
+    name: string;
+    state: string;
+    model?: string;
+    contextSize?: number;
+    lastActivity?: number;
+}
+
 export interface DashboardProvider {
     getUptime(): number;
     getStartedAt(): number;
@@ -23,6 +31,11 @@ export interface DashboardProvider {
     };
     getActivity(): ActivityEntry[];
     getLogs(): Array<{ timestamp: string; level: string; message: string; [key: string]: unknown }>;
+    getSessionNames(): string[];
+    getSessionState(name: string): SessionStateInfo | null;
+    getUsageBySession(name: string): {
+        today: { inputTokens: number; outputTokens: number; cost: number; messageCount: number };
+    } | null;
 }
 
 const MIME_TYPES: Record<string, string> = {
@@ -154,6 +167,7 @@ export class HttpServer {
                     model: this.dashboard.getModel(),
                     contextSize: this.dashboard.getContextSize(),
                     listenerCount: this.dashboard.getListenerCount(),
+                    sessions: this.dashboard.getSessionNames(),
                 });
             } else {
                 this.json(res, 200, {
@@ -164,6 +178,27 @@ export class HttpServer {
             }
         });
 
+        this.route("GET", "/api/sessions", (_req, res) => {
+            if (!this.dashboard) {
+                this.json(res, 200, { sessions: [] });
+                return;
+            }
+            const names = this.dashboard.getSessionNames();
+            const sessions = names.map((name) => {
+                const state = this.dashboard!.getSessionState(name);
+                const usage = this.dashboard!.getUsageBySession(name);
+                return {
+                    name,
+                    state: state?.state ?? "unknown",
+                    model: state?.model,
+                    contextSize: state?.contextSize,
+                    lastActivity: state?.lastActivity,
+                    today: usage?.today ?? null,
+                };
+            });
+            this.json(res, 200, { sessions });
+        });
+
         this.route("GET", "/api/cron", (_req, res) => {
             if (!this.dashboard) {
                 this.json(res, 200, { jobs: [] });
@@ -172,7 +207,7 @@ export class HttpServer {
             this.json(res, 200, { jobs: this.dashboard.getCronJobs() });
         });
 
-        this.route("GET", "/api/usage", (_req, res) => {
+        this.route("GET", "/api/usage", (req, res) => {
             if (!this.dashboard) {
                 this.json(res, 200, {
                     today: { inputTokens: 0, outputTokens: 0, cost: 0, messageCount: 0 },
@@ -181,6 +216,20 @@ export class HttpServer {
                 });
                 return;
             }
+
+            // Support ?session=<name> for per-session usage
+            const url = new URL(req.url ?? "/", "http://localhost");
+            const sessionParam = url.searchParams.get("session");
+            if (sessionParam && this.dashboard.getUsageBySession) {
+                const sessionUsage = this.dashboard.getUsageBySession(sessionParam);
+                if (!sessionUsage) {
+                    this.json(res, 404, { error: `Unknown session: ${sessionParam}` });
+                    return;
+                }
+                this.json(res, 200, { today: sessionUsage.today, session: sessionParam });
+                return;
+            }
+
             this.json(res, 200, this.dashboard.getUsage());
         });
 
@@ -267,6 +316,15 @@ export class HttpServer {
             if (!body || typeof body.message !== "string" || !body.message.trim()) {
                 this.json(res, 400, { error: "Missing required field: message" });
                 return;
+            }
+
+            // Validate session exists if specified
+            if (body.session && typeof body.session === "string" && this.dashboard) {
+                const validSessions = this.dashboard.getSessionNames();
+                if (!validSessions.includes(body.session)) {
+                    this.json(res, 400, { error: `Unknown session: ${body.session}` });
+                    return;
+                }
             }
 
             // Global rate limit first (prevents bypass via many source values)

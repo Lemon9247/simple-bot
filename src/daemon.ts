@@ -9,7 +9,7 @@ import { Tracker } from "./tracker.js";
 import type { Config, Listener, IncomingMessage, MessageOrigin, ToolCallInfo, ToolEndInfo, JobDefinition, OutgoingFile, Attachment, WebhookRequest, WebhookResult, ActivityEntry } from "./types.js";
 import type { Scheduler } from "./scheduler.js";
 import { HttpServer } from "./server.js";
-import type { DashboardProvider } from "./server.js";
+import type { DashboardProvider, SessionStateInfo } from "./server.js";
 import * as logger from "./logger.js";
 import { getLogBuffer } from "./logger.js";
 import { cleanupInbox, saveToInbox } from "./inbox.js";
@@ -175,6 +175,27 @@ export class Daemon implements DaemonRef, DashboardProvider {
 
     getLogs(): Array<{ timestamp: string; level: string; message: string; [key: string]: unknown }> {
         return getLogBuffer() as Array<{ timestamp: string; level: string; message: string; [key: string]: unknown }>;
+    }
+
+    getSessionNames(): string[] {
+        return this.sessionManager.getSessionNames();
+    }
+
+    getSessionState(name: string): SessionStateInfo | null {
+        const info = this.sessionManager.getSessionInfo(name);
+        if (!info) return null;
+        return {
+            name: info.name,
+            state: info.state,
+            lastActivity: info.lastActivity || undefined,
+        };
+    }
+
+    getUsageBySession(name: string): {
+        today: { inputTokens: number; outputTokens: number; cost: number; messageCount: number };
+    } | null {
+        if (!this.sessionManager.getSessionInfo(name)) return null;
+        return { today: this.tracker.todayBySession(name) };
     }
 
     private recordActivity(msg: IncomingMessage, responseTimeMs: number): void {
@@ -528,7 +549,7 @@ export class Daemon implements DaemonRef, DashboardProvider {
         if (contextSize === 0 && bridge?.running) {
             bridge.command("get_state").then((state: any) => {
                 const ctxSize = state?.contextSize ?? state?.context_size ?? state?.totalTokens ?? 0;
-                const recorded = this.tracker.record({ model, inputTokens, outputTokens, contextSize: ctxSize });
+                const recorded = this.tracker.record({ model, inputTokens, outputTokens, contextSize: ctxSize, sessionName });
                 logger.info("Usage recorded (via get_state)", {
                     session: sessionName,
                     model: recorded.model,
@@ -540,7 +561,7 @@ export class Daemon implements DaemonRef, DashboardProvider {
                 });
             }).catch((err: Error) => {
                 // Still record with zero context if get_state fails
-                const recorded = this.tracker.record({ model, inputTokens, outputTokens, contextSize: 0 });
+                const recorded = this.tracker.record({ model, inputTokens, outputTokens, contextSize: 0, sessionName });
                 logger.warn("Usage recorded without context size", {
                     session: sessionName,
                     model: recorded.model,
@@ -553,7 +574,7 @@ export class Daemon implements DaemonRef, DashboardProvider {
             return;
         }
 
-        const recorded = this.tracker.record({ model, inputTokens, outputTokens, contextSize });
+        const recorded = this.tracker.record({ model, inputTokens, outputTokens, contextSize, sessionName });
         logger.info("Usage recorded", {
             session: sessionName,
             model: recorded.model,

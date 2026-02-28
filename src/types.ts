@@ -132,6 +132,7 @@ export interface UsageEvent {
     contextSize: number;
     cost: number;
     compaction: boolean;
+    sessionName?: string;
 }
 
 // ─── Webhook Types ────────────────────────────────────────────

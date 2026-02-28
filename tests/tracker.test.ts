@@ -332,6 +332,100 @@ describe("JSONL persistence", () => {
     });
 });
 
+// ---------- Per-session tracking (P8-T15) ----------
+
+describe("Per-session tracking", () => {
+    it("record() stores sessionName on event", () => {
+        const tracker = new Tracker({ capacity: 10 });
+        const event = tracker.record({
+            model: "claude-sonnet-4",
+            inputTokens: 100,
+            outputTokens: 50,
+            contextSize: 1000,
+            sessionName: "work",
+        });
+        expect(event.sessionName).toBe("work");
+    });
+
+    it("record() omits sessionName when not provided", () => {
+        const tracker = new Tracker({ capacity: 10 });
+        const event = tracker.record({
+            model: "claude-sonnet-4",
+            inputTokens: 100,
+            outputTokens: 50,
+            contextSize: 1000,
+        });
+        expect(event.sessionName).toBeUndefined();
+    });
+
+    it("todayBySession() filters events by session name", () => {
+        const tracker = new Tracker({ capacity: 100 });
+        tracker.record({ model: "m", inputTokens: 100, outputTokens: 50, contextSize: 1000, sessionName: "main" });
+        tracker.record({ model: "m", inputTokens: 200, outputTokens: 100, contextSize: 2000, sessionName: "work" });
+        tracker.record({ model: "m", inputTokens: 300, outputTokens: 150, contextSize: 3000, sessionName: "main" });
+        tracker.record({ model: "m", inputTokens: 400, outputTokens: 200, contextSize: 4000 }); // no session
+
+        const mainUsage = tracker.todayBySession("main");
+        expect(mainUsage.inputTokens).toBe(400); // 100 + 300
+        expect(mainUsage.outputTokens).toBe(200); // 50 + 150
+        expect(mainUsage.messageCount).toBe(2);
+
+        const workUsage = tracker.todayBySession("work");
+        expect(workUsage.inputTokens).toBe(200);
+        expect(workUsage.outputTokens).toBe(100);
+        expect(workUsage.messageCount).toBe(1);
+    });
+
+    it("todayBySession() returns zeros for unknown session", () => {
+        const tracker = new Tracker({ capacity: 10 });
+        tracker.record({ model: "m", inputTokens: 100, outputTokens: 50, contextSize: 1000, sessionName: "main" });
+
+        const result = tracker.todayBySession("nonexistent");
+        expect(result).toEqual({ inputTokens: 0, outputTokens: 0, cost: 0, messageCount: 0 });
+    });
+
+    it("todayBySession() only counts today's events", () => {
+        const tracker = new Tracker({ capacity: 100 });
+        // Record a recent event
+        tracker.record({ model: "m", inputTokens: 100, outputTokens: 50, contextSize: 1000, sessionName: "main" });
+
+        const result = tracker.todayBySession("main");
+        expect(result.messageCount).toBe(1);
+        expect(result.inputTokens).toBe(100);
+    });
+
+    it("today() still includes all sessions", () => {
+        const tracker = new Tracker({ capacity: 100 });
+        tracker.record({ model: "m", inputTokens: 100, outputTokens: 50, contextSize: 1000, sessionName: "main" });
+        tracker.record({ model: "m", inputTokens: 200, outputTokens: 100, contextSize: 2000, sessionName: "work" });
+
+        const total = tracker.today();
+        expect(total.inputTokens).toBe(300);
+        expect(total.messageCount).toBe(2);
+    });
+
+    it("sessionName persists through JSONL round-trip", async () => {
+        const logPath = join(tmpdir(), `tracker-session-${Date.now()}-${Math.random().toString(36).slice(2)}`, "usage.jsonl");
+        const tracker = new Tracker({ usageLog: logPath, capacity: 10 });
+
+        tracker.record({ model: "m", inputTokens: 100, outputTokens: 50, contextSize: 1000, sessionName: "work" });
+
+        // Wait for async write
+        await new Promise((r) => setTimeout(r, 150));
+
+        // Load into a new tracker
+        const tracker2 = new Tracker({ usageLog: logPath, capacity: 10 });
+        await tracker2.loadLog();
+
+        const events = tracker2.query();
+        expect(events).toHaveLength(1);
+        expect(events[0].sessionName).toBe("work");
+
+        // Clean up
+        await rm(join(logPath, ".."), { recursive: true, force: true });
+    });
+});
+
 // ---------- Integration: record() end-to-end ----------
 
 describe("record() integration", () => {

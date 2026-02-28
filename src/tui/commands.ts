@@ -108,6 +108,14 @@ const commands: TuiCommand[] = [
         },
     },
     {
+        name: "session",
+        description: "Show current session name",
+        async execute({ rpc, chat }) {
+            const name = rpc.getSession() ?? "(default)";
+            chat.addSystemMessage(`📎 Session: ${name}`);
+        },
+    },
+    {
         name: "stats",
         description: "Show session stats",
         async execute({ rpc, chat }) {
