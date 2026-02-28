@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { request } from "node:http";
-import { HttpServer, type DashboardProvider } from "../src/server.js";
+import { HttpServer, type DashboardProvider, type SessionStateInfo } from "../src/server.js";
 import type { ServerConfig, ActivityEntry } from "../src/types.js";
 
 const TEST_TOKEN = "test-secret-token";
@@ -93,6 +93,15 @@ function makeMockProvider(overrides: Partial<DashboardProvider> = {}): Dashboard
             { timestamp: "2026-02-27T12:00:00.000Z", level: "info", message: "Bot started" },
             { timestamp: "2026-02-27T12:01:00.000Z", level: "warn", message: "Rate limit hit", sender: "alice" },
         ],
+        getSessionNames: () => ["main"],
+        getSessionState: (name: string): SessionStateInfo | null => {
+            if (name === "main") return { name: "main", state: "running", lastActivity: Date.now() };
+            return null;
+        },
+        getUsageBySession: (name: string) => {
+            if (name === "main") return { today: { inputTokens: 15000, outputTokens: 5000, cost: 0.12, messageCount: 8 } };
+            return null;
+        },
         ...overrides,
     };
 }
