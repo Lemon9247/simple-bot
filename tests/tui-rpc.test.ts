@@ -132,6 +132,49 @@ describe("RpcClient", () => {
         await expect(rpc.send("test")).rejects.toThrow("Not connected");
     });
 
+    it("includes session in all messages when configured", async () => {
+        let receivedMsgs: any[] = [];
+        server.setWsHandler(async (msg) => {
+            receivedMsgs.push(msg);
+            return { ok: true };
+        });
+
+        const { host, port } = getAddr(server);
+        const rpc = new RpcClient(host, port, TEST_TOKEN, "work");
+        await rpc.connect();
+
+        expect(rpc.getSession()).toBe("work");
+
+        await rpc.send("get_state");
+        await rpc.send("prompt", { message: "hello" });
+
+        expect(receivedMsgs).toHaveLength(2);
+        expect(receivedMsgs[0].session).toBe("work");
+        expect(receivedMsgs[1].session).toBe("work");
+        expect(receivedMsgs[1].message).toBe("hello");
+
+        rpc.disconnect();
+    });
+
+    it("does not include session field when not configured", async () => {
+        let receivedMsg: any = null;
+        server.setWsHandler(async (msg) => {
+            receivedMsg = msg;
+            return { ok: true };
+        });
+
+        const { host, port } = getAddr(server);
+        const rpc = new RpcClient(host, port, TEST_TOKEN);
+        await rpc.connect();
+
+        expect(rpc.getSession()).toBeUndefined();
+
+        await rpc.send("get_state");
+        expect(receivedMsg.session).toBeUndefined();
+
+        rpc.disconnect();
+    });
+
     it("sends multiple concurrent commands correctly", async () => {
         server.setWsHandler(async (msg) => {
             // Simulate varying response times
