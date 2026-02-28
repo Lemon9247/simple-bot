@@ -49,8 +49,9 @@ describe("bot!reboot", () => {
         await new Promise((r) => setTimeout(r, 100));
 
         expect(listener.sent).toHaveLength(2);
-        expect(listener.sent[0].text).toContain("Rebooting");
-        expect(listener.sent[1].text).toContain("Rebooted");
+        expect(listener.sent[0].text).toContain("Rebooting session");
+        expect(listener.sent[0].text).toContain("main");
+        expect(listener.sent[1].text).toContain("rebooted");
 
         // Bridge should still be running after reboot
         expect(bridge.running).toBe(true);
@@ -298,6 +299,7 @@ describe("bot!think", () => {
         expect(listener.sent).toHaveLength(1);
         expect(listener.sent[0].text).toContain("enabled");
         expect(listener.sent[0].text).toContain("🧠");
+        expect(listener.sent[0].text).toContain("main");
     });
 
     it("disables extended thinking", async () => {
@@ -318,6 +320,7 @@ describe("bot!think", () => {
 
         expect(listener.sent).toHaveLength(2);
         expect(listener.sent[1].text).toContain("disabled");
+        expect(listener.sent[1].text).toContain("main");
     });
 
     it("shows current state with no argument", async () => {
@@ -334,6 +337,7 @@ describe("bot!think", () => {
 
         expect(listener.sent).toHaveLength(1);
         expect(listener.sent[0].text).toContain("currently **off**");
+        expect(listener.sent[0].text).toContain("main");
         expect(listener.sent[0].text).toContain("bot!think on|off");
     });
 
