@@ -9,20 +9,22 @@ function usage(): never {
 Usage: simple-bot-tui [options]
 
 Options:
-  --host <addr>   Daemon host (default: localhost)
-  --port <port>   Daemon port (default: 3001)
-  --token <tok>   Auth token (or set SIMPLE_BOT_TOKEN env var)
-  --watch         Read-only monitoring mode (no editor)
-  --help          Show this help
+  --host <addr>      Daemon host (default: localhost)
+  --port <port>      Daemon port (default: 3001)
+  --token <tok>      Auth token (or set SIMPLE_BOT_TOKEN env var)
+  --session <name>   Target session (default: daemon default)
+  --watch            Read-only monitoring mode (no editor)
+  --help             Show this help
 
 The token can also be read from config.yaml in the current directory.`);
     process.exit(0);
 }
 
-function parseArgs(argv: string[]): { host: string; port: number; token: string; watch: boolean } {
+function parseArgs(argv: string[]): { host: string; port: number; token: string; session?: string; watch: boolean } {
     let host = "localhost";
     let port = 3001;
     let token = process.env.SIMPLE_BOT_TOKEN ?? "";
+    let session: string | undefined;
     let watch = false;
 
     for (let i = 0; i < argv.length; i++) {
@@ -36,6 +38,9 @@ function parseArgs(argv: string[]): { host: string; port: number; token: string;
                 break;
             case "--token":
                 token = argv[++i] ?? token;
+                break;
+            case "--session":
+                session = argv[++i] ?? undefined;
                 break;
             case "--watch":
                 watch = true;
@@ -70,7 +75,7 @@ function parseArgs(argv: string[]): { host: string; port: number; token: string;
         process.exit(1);
     }
 
-    return { host, port, token, watch };
+    return { host, port, token, session, watch };
 }
 
 const opts = parseArgs(process.argv.slice(2));

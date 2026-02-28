@@ -9,6 +9,7 @@ export interface TuiClientOptions {
     host: string;
     port: number;
     token: string;
+    session?: string;
     watch?: boolean;
 }
 
@@ -34,7 +35,7 @@ export async function startTuiClient(opts: TuiClientOptions): Promise<void> {
     }
     tui.addChild(footer);
 
-    const rpc = new RpcClient(opts.host, opts.port, opts.token);
+    const rpc = new RpcClient(opts.host, opts.port, opts.token, opts.session);
 
     // ─── Shutdown ─────────────────────────────────────────────
     let exiting = false;
@@ -140,7 +141,8 @@ export async function startTuiClient(opts: TuiClientOptions): Promise<void> {
         if (opts.watch) {
             chat.addSystemMessage(ansi.dim("📺 Watch mode — read-only monitoring"));
         } else {
-            chat.addSystemMessage(ansi.dim("Connected. Type a message or /quit to exit."));
+            const sessionLabel = opts.session ? ` (session: ${opts.session})` : "";
+            chat.addSystemMessage(ansi.dim(`Connected${sessionLabel}. Type a message or /quit to exit.`));
         }
     } catch (err) {
         footer.setStatus("disconnected");
