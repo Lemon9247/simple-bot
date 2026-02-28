@@ -318,6 +318,15 @@ export class HttpServer {
                 return;
             }
 
+            // Validate session exists if specified
+            if (body.session && typeof body.session === "string" && this.dashboard) {
+                const validSessions = this.dashboard.getSessionNames();
+                if (!validSessions.includes(body.session)) {
+                    this.json(res, 400, { error: `Unknown session: ${body.session}` });
+                    return;
+                }
+            }
+
             // Global rate limit first (prevents bypass via many source values)
             if (this.isWebhookRateLimited(WEBHOOK_GLOBAL_BUCKET, WEBHOOK_GLOBAL_RATE_MAX)) {
                 this.json(res, 429, { error: "Rate limit exceeded" });
