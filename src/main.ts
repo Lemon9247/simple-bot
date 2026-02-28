@@ -1,34 +1,53 @@
 import { loadConfig } from "./config.js";
 import { Daemon } from "./daemon.js";
 import { Bridge } from "./bridge.js";
+import { SessionManager } from "./session-manager.js";
 import { Scheduler } from "./scheduler.js";
+import type { BridgeOptions } from "./bridge.js";
 import * as logger from "./logger.js";
 
 const configPath = process.argv[2] ?? "config.yaml";
 const config = loadConfig(configPath);
 
-// Build pi args, injecting extension flags
-const piArgs = config.pi.args ?? ["--mode", "rpc", "--continue"];
-if (config.pi.extensions) {
-    for (const ext of config.pi.extensions) {
-        piArgs.push("-e", ext);
+// Bridge factory that injects extension flags into args
+function createBridge(opts: BridgeOptions): Bridge {
+    const sessionConfig = config.sessions
+        ? Object.values(config.sessions).find(s => s.pi.cwd === opts.cwd)
+        : undefined;
+    const extensions = sessionConfig?.pi.extensions ?? config.pi.extensions;
+
+    const args = [...(opts.args ?? ["--mode", "rpc", "--continue"])];
+    if (extensions) {
+        for (const ext of extensions) {
+            args.push("-e", ext);
+        }
     }
+
+    return new Bridge({
+        cwd: opts.cwd,
+        command: opts.command,
+        args,
+    });
 }
 
-const bridge = new Bridge({
-    cwd: config.pi.cwd,
-    command: config.pi.command,
-    args: piArgs,
-});
+const sessionManager = new SessionManager(config, createBridge);
+const daemon = new Daemon(config, sessionManager);
 
-const daemon = new Daemon(config, bridge);
-
-const scheduler = config.cron
-    ? new Scheduler(config.cron, bridge, () => daemon.getLastUserInteractionTime())
-    : undefined;
-
-if (scheduler) {
-    daemon.setScheduler(scheduler);
+// For the scheduler, eagerly start the default session to get its bridge
+if (config.cron) {
+    (async () => {
+        const defaultBridge = await sessionManager.getOrStartSession(
+            sessionManager.getDefaultSessionName()
+        );
+        const scheduler = new Scheduler(
+            config.cron!,
+            defaultBridge,
+            () => daemon.getLastUserInteractionTime()
+        );
+        daemon.setScheduler(scheduler);
+    })().catch((err) => {
+        logger.error("Failed to initialize scheduler", { error: String(err) });
+    });
 }
 
 // Wire up configured listeners

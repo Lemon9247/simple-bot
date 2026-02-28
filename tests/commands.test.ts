@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { Bridge } from "../src/bridge.js";
+import { SessionManager } from "../src/session-manager.js";
 import { Daemon } from "../src/daemon.js";
 import { Scheduler } from "../src/scheduler.js";
 import { createMockProcess, MockListener } from "./helpers.js";
@@ -19,6 +20,11 @@ function sendCommand(listener: MockListener, text: string) {
     });
 }
 
+/** Wrap a pre-built Bridge in a SessionManager for testing */
+function wrapBridge(config: Config, bridge: Bridge): SessionManager {
+    return new SessionManager(config, (_opts) => bridge);
+}
+
 /** SpawnFn that creates a fresh mock process each call (needed for restart tests). */
 function createRespawnableMockFn(responseText = "ok") {
     return () => createMockProcess(responseText).proc as any;
@@ -33,7 +39,7 @@ describe("bot!reboot", () => {
 
     it("stops and restarts the pi process", async () => {
         const bridge = new Bridge({ cwd: "/tmp", spawnFn: createRespawnableMockFn() });
-        daemon = new Daemon(baseConfig, bridge);
+        daemon = new Daemon(baseConfig, wrapBridge(baseConfig, bridge));
 
         const listener = new MockListener("discord");
         daemon.addListener(listener);
@@ -83,7 +89,7 @@ describe("bot!reboot", () => {
         });
 
         const bridge = new Bridge({ cwd: "/tmp", spawnFn: () => proc as any });
-        daemon = new Daemon(baseConfig, bridge);
+        daemon = new Daemon(baseConfig, wrapBridge(baseConfig, bridge));
 
         const listener = new MockListener("discord");
         daemon.addListener(listener);
@@ -112,7 +118,7 @@ describe("bot!reboot", () => {
 
     it("next message works after reboot", async () => {
         const bridge = new Bridge({ cwd: "/tmp", spawnFn: createRespawnableMockFn() });
-        daemon = new Daemon(baseConfig, bridge);
+        daemon = new Daemon(baseConfig, wrapBridge(baseConfig, bridge));
 
         const listener = new MockListener("discord");
         daemon.addListener(listener);
@@ -145,7 +151,7 @@ describe("bot!status", () => {
     it("shows uptime, model, and context info", async () => {
         const { spawnFn } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });
-        daemon = new Daemon(baseConfig, bridge);
+        daemon = new Daemon(baseConfig, wrapBridge(baseConfig, bridge));
 
         const listener = new MockListener("discord");
         daemon.addListener(listener);
@@ -174,7 +180,9 @@ describe("bot!status", () => {
         const cronConfig = { dir: "/tmp/cron-test-" + Date.now() };
         const scheduler = new Scheduler(cronConfig, bridge);
 
-        daemon = new Daemon(baseConfig, bridge, scheduler);
+        const sm = wrapBridge(baseConfig, bridge);
+        daemon = new Daemon(baseConfig, sm);
+        daemon.setScheduler(scheduler);
 
         const listener = new MockListener("discord");
         daemon.addListener(listener);
@@ -201,7 +209,7 @@ describe("bot!status", () => {
     it("shows usage stats when tracker has events", async () => {
         const { spawnFn } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });
-        daemon = new Daemon(baseConfig, bridge);
+        daemon = new Daemon(baseConfig, wrapBridge(baseConfig, bridge));
 
         const listener = new MockListener("discord");
         daemon.addListener(listener);
@@ -250,7 +258,7 @@ describe("bot!status", () => {
         });
 
         const bridge = new Bridge({ cwd: "/tmp", spawnFn: () => proc as any });
-        daemon = new Daemon(baseConfig, bridge);
+        daemon = new Daemon(baseConfig, wrapBridge(baseConfig, bridge));
 
         const listener = new MockListener("discord");
         daemon.addListener(listener);
@@ -278,7 +286,7 @@ describe("bot!think", () => {
     it("enables extended thinking", async () => {
         const { spawnFn } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });
-        daemon = new Daemon(baseConfig, bridge);
+        daemon = new Daemon(baseConfig, wrapBridge(baseConfig, bridge));
 
         const listener = new MockListener("discord");
         daemon.addListener(listener);
@@ -295,7 +303,7 @@ describe("bot!think", () => {
     it("disables extended thinking", async () => {
         const { spawnFn } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });
-        daemon = new Daemon(baseConfig, bridge);
+        daemon = new Daemon(baseConfig, wrapBridge(baseConfig, bridge));
 
         const listener = new MockListener("discord");
         daemon.addListener(listener);
@@ -315,7 +323,7 @@ describe("bot!think", () => {
     it("shows current state with no argument", async () => {
         const { spawnFn } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });
-        daemon = new Daemon(baseConfig, bridge);
+        daemon = new Daemon(baseConfig, wrapBridge(baseConfig, bridge));
 
         const listener = new MockListener("discord");
         daemon.addListener(listener);
@@ -332,7 +340,7 @@ describe("bot!think", () => {
     it("tracks thinking state across calls", async () => {
         const { spawnFn } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });
-        daemon = new Daemon(baseConfig, bridge);
+        daemon = new Daemon(baseConfig, wrapBridge(baseConfig, bridge));
 
         const listener = new MockListener("discord");
         daemon.addListener(listener);
@@ -371,7 +379,7 @@ describe("bot!think", () => {
         });
 
         const bridge = new Bridge({ cwd: "/tmp", spawnFn: () => proc as any });
-        daemon = new Daemon(baseConfig, bridge);
+        daemon = new Daemon(baseConfig, wrapBridge(baseConfig, bridge));
 
         const listener = new MockListener("discord");
         daemon.addListener(listener);
