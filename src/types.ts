@@ -176,6 +176,7 @@ export interface JobDefinition {
     notify: string | "none" | null;  // null = inherit default
     enabled: boolean;
     gracePeriodMs?: number;  // per-job override; undefined = use global default
+    session?: string;  // target session name; undefined = use default session
     body: string;
 }
 

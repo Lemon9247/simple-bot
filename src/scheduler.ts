@@ -5,6 +5,7 @@ import { EventEmitter } from "node:events";
 import cron from "node-cron";
 import { parseJobFile } from "./job.js";
 import type { Bridge } from "./bridge.js";
+import type { SessionManager } from "./session-manager.js";
 import type { CronConfig, JobDefinition, Step } from "./types.js";
 import * as logger from "./logger.js";
 
@@ -16,6 +17,7 @@ interface ActiveJob {
 export class Scheduler extends EventEmitter {
     private config: CronConfig;
     private bridge: Bridge;
+    private sessionManager: SessionManager | null = null;
     private getUserInteractionTime: (() => number) | undefined;
     private jobs = new Map<string, ActiveJob>();
     private watcher: FSWatcher | null = null;
@@ -28,6 +30,15 @@ export class Scheduler extends EventEmitter {
         this.config = config;
         this.bridge = bridge;
         this.getUserInteractionTime = getUserInteractionTime;
+    }
+
+    /**
+     * Set a SessionManager for resolving per-job session bridges.
+     * When set, jobs with a `session` field will use the named session's bridge.
+     * Jobs without a `session` field use the default session.
+     */
+    setSessionManager(sm: SessionManager): void {
+        this.sessionManager = sm;
     }
 
     async start(): Promise<void> {
@@ -114,6 +125,18 @@ export class Scheduler extends EventEmitter {
         }
     }
 
+    /**
+     * Resolve the Bridge for a given job.
+     * Uses SessionManager if available, falling back to the direct bridge.
+     */
+    private resolveJobBridge(job: JobDefinition): Bridge | Promise<Bridge> {
+        if (this.sessionManager) {
+            const sessionName = job.session ?? this.sessionManager.getDefaultSessionName();
+            return this.sessionManager.getOrStartSession(sessionName);
+        }
+        return this.bridge;
+    }
+
     private async executeJob(job: JobDefinition): Promise<void> {
         if (this.getUserInteractionTime) {
             const elapsed = Date.now() - this.getUserInteractionTime();
@@ -128,13 +151,35 @@ export class Scheduler extends EventEmitter {
             }
         }
 
-        if (this.bridge.busy || this.executing) {
+        // Check executing mutex synchronously before any async work
+        if (this.executing) {
+            logger.info("Skipping cron job, busy", { name: job.name });
+            return;
+        }
+
+        // Resolve the bridge for this job's session.
+        // Avoid await when resolveJobBridge returns synchronously (no session manager)
+        // to preserve existing synchronous execution semantics for single-bridge mode.
+        let bridge: Bridge;
+        try {
+            const result = this.resolveJobBridge(job);
+            bridge = result instanceof Promise ? await result : result;
+        } catch (err) {
+            logger.error("Failed to resolve session for cron job", {
+                name: job.name,
+                session: job.session,
+                error: String(err),
+            });
+            return;
+        }
+
+        if (bridge.busy || this.executing) {
             logger.info("Skipping cron job, busy", { name: job.name });
             return;
         }
 
         this.executing = true;
-        const execution = this.runSteps(job);
+        const execution = this.runSteps(job, bridge);
         this.activeExecution = execution;
 
         try {
@@ -145,12 +190,12 @@ export class Scheduler extends EventEmitter {
         }
     }
 
-    private async runSteps(job: JobDefinition): Promise<void> {
-        logger.info("Executing cron job", { name: job.name, steps: job.steps.length });
+    private async runSteps(job: JobDefinition, bridge: Bridge): Promise<void> {
+        logger.info("Executing cron job", { name: job.name, steps: job.steps.length, session: job.session });
 
         for (const step of job.steps) {
             try {
-                await this.executeStep(step, job);
+                await this.executeStep(step, job, bridge);
             } catch (err) {
                 logger.error("Step failed, aborting job", {
                     name: job.name,
@@ -164,20 +209,20 @@ export class Scheduler extends EventEmitter {
         logger.info("Cron job complete", { name: job.name });
     }
 
-    private async executeStep(step: Step, job: JobDefinition): Promise<void> {
+    private async executeStep(step: Step, job: JobDefinition, bridge: Bridge): Promise<void> {
         switch (step.type) {
             case "new-session":
-                await this.bridge.command("new_session");
+                await bridge.command("new_session");
                 logger.info("Step: new-session", { job: job.name });
                 break;
 
             case "compact":
-                await this.bridge.command("compact");
+                await bridge.command("compact");
                 logger.info("Step: compact", { job: job.name });
                 break;
 
             case "model": {
-                const result = await this.bridge.command("get_available_models");
+                const result = await bridge.command("get_available_models");
                 const models: any[] = result?.models ?? [];
                 const query = step.model.toLowerCase();
                 const match = models.find(
@@ -189,14 +234,14 @@ export class Scheduler extends EventEmitter {
                 if (!match) {
                     throw new Error(`No model matching '${step.model}'`);
                 }
-                await this.bridge.command("set_model", { provider: match.provider, modelId: match.id });
+                await bridge.command("set_model", { provider: match.provider, modelId: match.id });
                 logger.info("Step: model", { job: job.name, model: `${match.provider}/${match.id}` });
                 break;
             }
 
             case "prompt": {
                 const message = `[CRON:${job.name}] ${job.body}`;
-                const response = await this.bridge.sendMessage(message);
+                const response = await bridge.sendMessage(message);
                 if (response && response.trim()) {
                     this.emit("response", { job, response });
                 }
@@ -205,7 +250,7 @@ export class Scheduler extends EventEmitter {
             }
 
             case "reload":
-                await this.bridge.command("prompt", { message: "/reload-runtime" });
+                await bridge.command("prompt", { message: "/reload-runtime" });
                 logger.info("Step: reload", { job: job.name });
                 break;
         }
