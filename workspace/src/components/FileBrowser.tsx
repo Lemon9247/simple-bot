@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, type MouseEvent as ReactMouseEvent } from "react";
 import { fetchFiles, putFile, deleteFile, fetchFile } from "../api";
 import type { VaultFileEntry } from "../api";
 
@@ -24,7 +24,9 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
     const [expanded, setExpanded] = useState<Set<string>>(new Set());
     const [loading, setLoading] = useState(false);
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: VaultFileEntry } | null>(null);
+    const [createMenu, setCreateMenu] = useState<{ x: number; y: number } | null>(null);
     const contextMenuRef = useRef<HTMLDivElement>(null);
+    const createMenuRef = useRef<HTMLDivElement>(null);
 
     const loadFiles = useCallback(async (searchQuery?: string) => {
         setLoading(true);
@@ -49,21 +51,27 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
         return () => clearTimeout(timeout);
     }, [search, loadFiles]);
 
-    // Close context menu on click outside
+    // Close menus on click outside
     useEffect(() => {
         const handler = (e: MouseEvent) => {
             if (contextMenu && contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
                 setContextMenu(null);
             }
+            if (createMenu && createMenuRef.current && !createMenuRef.current.contains(e.target as Node)) {
+                setCreateMenu(null);
+            }
         };
         document.addEventListener("mousedown", handler);
         return () => document.removeEventListener("mousedown", handler);
-    }, [contextMenu]);
+    }, [contextMenu, createMenu]);
 
-    // Close context menu on Escape
+    // Close menus on Escape
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
-            if (e.key === "Escape") setContextMenu(null);
+            if (e.key === "Escape") {
+                setContextMenu(null);
+                setCreateMenu(null);
+            }
         };
         document.addEventListener("keydown", handler);
         return () => document.removeEventListener("keydown", handler);
@@ -81,8 +89,9 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
         });
     };
 
-    const handleCreateFile = async () => {
-        const name = window.prompt("New file name:", "untitled.md");
+    const handleCreateFile = async (type: "md" | "excalidraw" = "md") => {
+        const defaultName = type === "excalidraw" ? "untitled.excalidraw" : "untitled.md";
+        const name = window.prompt("New file name:", defaultName);
         if (!name) return;
 
         const validationError = validateFileName(name);
@@ -91,11 +100,29 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
             return;
         }
 
-        // Ensure .md extension if not provided
-        const filePath = name.includes(".") ? name : `${name}.md`;
+        // Ensure appropriate extension
+        let filePath: string;
+        if (name.includes(".")) {
+            filePath = name;
+        } else {
+            filePath = type === "excalidraw" ? `${name}.excalidraw` : `${name}.md`;
+        }
+
+        // Empty excalidraw document or empty markdown
+        const content = filePath.endsWith(".excalidraw")
+            ? JSON.stringify({
+                type: "excalidraw",
+                version: 2,
+                source: "nest",
+                elements: [],
+                appState: {
+                    viewBackgroundColor: "#0d1117"
+                }
+            }, null, 4)
+            : "";
 
         try {
-            await putFile(filePath, "");
+            await putFile(filePath, content);
             await loadFiles(search || undefined);
             onFileCreated?.(filePath);
         } catch (err) {
@@ -205,7 +232,10 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
                     />
                     <button
                         className="new-file-btn"
-                        onClick={handleCreateFile}
+                        onClick={(e: ReactMouseEvent) => {
+                            const rect = (e.target as HTMLElement).getBoundingClientRect();
+                            setCreateMenu(createMenu ? null : { x: rect.left, y: rect.bottom + 4 });
+                        }}
                         title="New file"
                     >
                         +
@@ -221,6 +251,22 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
                     entries.map((entry) => renderEntry(entry, 0))
                 )}
             </div>
+
+            {/* Create menu */}
+            {createMenu && (
+                <div
+                    ref={createMenuRef}
+                    className="context-menu"
+                    style={{ left: createMenu.x, top: createMenu.y }}
+                >
+                    <button onClick={() => { setCreateMenu(null); handleCreateFile("md"); }}>
+                        📄 Markdown
+                    </button>
+                    <button onClick={() => { setCreateMenu(null); handleCreateFile("excalidraw"); }}>
+                        🎨 Drawing
+                    </button>
+                </div>
+            )}
 
             {/* Context menu */}
             {contextMenu && (

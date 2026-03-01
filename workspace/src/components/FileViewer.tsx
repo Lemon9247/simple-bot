@@ -1,8 +1,9 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from "react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { fetchFile, putFile, fetchFiles } from "../api";
-import Editor from "./Editor";
+
+const Editor = lazy(() => import("./Editor"));
 
 const escapeHtml = (str: string) =>
     str.replace(/[&<>"']/g, (m) => ({
@@ -242,13 +243,15 @@ export default function FileViewer({ path, onBack, onWikiLink, onDirtyChange }: 
             </div>
             {editMode && isMarkdown ? (
                 <div className="editor-container">
-                    <Editor
-                        content={editedContent ?? ""}
-                        onChange={handleEditorChange}
-                        filePath={path}
-                        onSave={handleSave}
-                        fileList={fileList}
-                    />
+                    <Suspense fallback={<div className="empty-state">Loading editor…</div>}>
+                        <Editor
+                            content={editedContent ?? ""}
+                            onChange={handleEditorChange}
+                            filePath={path}
+                            onSave={handleSave}
+                            fileList={fileList}
+                        />
+                    </Suspense>
                 </div>
             ) : isMarkdown ? (
                 <div

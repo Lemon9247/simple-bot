@@ -1,8 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import FileBrowser from "./FileBrowser";
 import Dashboard from "./Dashboard";
 import FileViewer from "./FileViewer";
 import Chat from "./Chat";
+import { fetchFile } from "../api";
+
+const Canvas = lazy(() => import("./Canvas"));
 
 export default function Layout() {
     const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -13,7 +16,14 @@ export default function Layout() {
         typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches
     );
 
-    // Track dirty state from FileViewer
+    // Canvas state for .excalidraw files
+    const [canvasData, setCanvasData] = useState<string | null>(null);
+    const [canvasLoading, setCanvasLoading] = useState(false);
+    const [canvasError, setCanvasError] = useState<string | null>(null);
+
+    const isExcalidraw = selectedFile?.endsWith(".excalidraw") ?? false;
+
+    // Track dirty state from FileViewer / Canvas
     const dirtyRef = useRef(false);
 
     useEffect(() => {
@@ -22,6 +32,35 @@ export default function Layout() {
         mediaQuery.addEventListener("change", handler);
         return () => mediaQuery.removeEventListener("change", handler);
     }, []);
+
+    // Load .excalidraw file content when selected
+    useEffect(() => {
+        if (!selectedFile || !selectedFile.endsWith(".excalidraw")) {
+            setCanvasData(null);
+            setCanvasError(null);
+            return;
+        }
+
+        let cancelled = false;
+        setCanvasLoading(true);
+        setCanvasError(null);
+
+        fetchFile(selectedFile)
+            .then((res) => {
+                if (!cancelled) {
+                    setCanvasData(res.content);
+                    setCanvasLoading(false);
+                }
+            })
+            .catch((err) => {
+                if (!cancelled) {
+                    setCanvasError(err.message || "Failed to load drawing");
+                    setCanvasLoading(false);
+                }
+            });
+
+        return () => { cancelled = true; };
+    }, [selectedFile]);
 
     const confirmIfDirty = useCallback((): boolean => {
         if (!dirtyRef.current) return true;
@@ -120,19 +159,44 @@ export default function Layout() {
                 )}
 
                 {/* Main content */}
-                <div className="content">
-                    <div className="content-inner">
-                        {selectedFile ? (
-                            <FileViewer
-                                path={selectedFile}
-                                onBack={handleBack}
-                                onWikiLink={handleWikiLink}
-                                onDirtyChange={handleDirtyChange}
-                            />
-                        ) : (
-                            <Dashboard />
-                        )}
-                    </div>
+                <div className={`content ${isExcalidraw ? "content-canvas" : ""}`}>
+                    {isExcalidraw && selectedFile ? (
+                        canvasLoading ? (
+                            <div className="content-inner">
+                                <div className="empty-state">Loading drawing…</div>
+                            </div>
+                        ) : canvasError ? (
+                            <div className="content-inner">
+                                <div className="empty-state">Error: {canvasError}</div>
+                            </div>
+                        ) : canvasData !== null ? (
+                            <Suspense fallback={
+                                <div className="content-inner">
+                                    <div className="empty-state">Loading canvas…</div>
+                                </div>
+                            }>
+                                <Canvas
+                                    key={selectedFile}
+                                    initialData={canvasData}
+                                    filePath={selectedFile}
+                                    onDirtyChange={handleDirtyChange}
+                                />
+                            </Suspense>
+                        ) : null
+                    ) : (
+                        <div className="content-inner">
+                            {selectedFile ? (
+                                <FileViewer
+                                    path={selectedFile}
+                                    onBack={handleBack}
+                                    onWikiLink={handleWikiLink}
+                                    onDirtyChange={handleDirtyChange}
+                                />
+                            ) : (
+                                <Dashboard />
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 {/* Chat */}
