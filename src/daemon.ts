@@ -14,6 +14,8 @@ import * as logger from "./logger.js";
 import { getLogBuffer } from "./logger.js";
 import { cleanupInbox, saveToInbox } from "./inbox.js";
 import { compressImage } from "./image.js";
+import { VaultFiles } from "./vault/files.js";
+import { VaultGit } from "./vault/git.js";
 
 const MAX_MESSAGE_LENGTH = 4000;
 const RATE_WINDOW_MS = 60_000;
@@ -261,6 +263,14 @@ export class Daemon implements DaemonRef, DashboardProvider {
                 return bridge.command(type, params);
             });
             await this.httpServer.start();
+
+            // Wire vault if configured
+            if (this.config.vault?.path) {
+                const vaultFiles = new VaultFiles(this.config.vault.path);
+                const vaultGit = new VaultGit(this.config.vault.path);
+                this.httpServer.setVault(vaultFiles, vaultGit);
+                logger.info("Vault configured", { path: this.config.vault.path });
+            }
         }
 
         logger.info("nest started", {
