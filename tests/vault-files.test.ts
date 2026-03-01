@@ -55,6 +55,25 @@ describe("VaultFiles", () => {
             const result = await vault.readFile("sub/nested.md");
             expect(result.content).toBe("nested content");
         });
+
+        it("returns base64 encoding for binary files", async () => {
+            // Minimal PNG: 8-byte signature
+            const pngBytes = Buffer.from([
+                0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+            ]);
+            writeFileSync(join(TMP_DIR, "image.png"), pngBytes);
+            const vault = makeVault();
+            const result = await vault.readFile("image.png");
+            expect(result.mimeType).toBe("image/png");
+            expect(result.encoding).toBe("base64");
+            expect(result.content).toBe(pngBytes.toString("base64"));
+        });
+
+        it("throws VaultPathError when reading a directory", async () => {
+            mkdirSync(join(TMP_DIR, "mydir"), { recursive: true });
+            const vault = makeVault();
+            await expect(vault.readFile("mydir")).rejects.toThrow(VaultPathError);
+        });
     });
 
     // ─── Write ────────────────────────────────────────────

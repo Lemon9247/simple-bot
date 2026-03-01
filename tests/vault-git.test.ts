@@ -33,8 +33,7 @@ describe("VaultGit", () => {
     describe("log", () => {
         it("returns empty array for repo with no commits", async () => {
             const git = new VaultGit(TMP_DIR);
-            // git log fails on empty repo — should return empty
-            const entries = await git.log().catch(() => []);
+            const entries = await git.log();
             expect(entries).toEqual([]);
         });
 

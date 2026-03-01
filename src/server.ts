@@ -299,7 +299,9 @@ export class HttpServer {
 
     private handleVaultError(res: ServerResponse, err: unknown): void {
         if (err instanceof VaultPathError) {
-            this.json(res, 403, { error: err.message });
+            // Directory-read errors get 400; path traversal errors get 403
+            const status = err.message.includes("is a directory") ? 400 : 403;
+            this.json(res, status, { error: err.message });
         } else if (err instanceof VaultNotFoundError) {
             this.json(res, 404, { error: err.message });
         } else {

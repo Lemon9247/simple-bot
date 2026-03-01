@@ -29,6 +29,12 @@ const MIME_TYPES: Record<string, string> = {
     ".excalidraw": "application/json",
 };
 
+const TEXT_EXTENSIONS = new Set([
+    ".md", ".txt", ".json", ".yaml", ".yml",
+    ".html", ".css", ".js", ".ts", ".svg",
+    ".excalidraw",
+]);
+
 export class VaultFiles {
     private root: string;
 
@@ -91,15 +97,29 @@ export class VaultFiles {
         }
     }
 
-    async readFile(relativePath: string): Promise<{ content: string; mimeType: string }> {
+    async readFile(relativePath: string): Promise<{ content: string; mimeType: string; encoding?: string }> {
         const fullPath = await this.resolveSafe(relativePath);
 
         try {
-            const content = await fsReadFile(fullPath, "utf-8");
+            // Check if path is a directory before attempting to read
+            const stat = await lstat(fullPath);
+            if (stat.isDirectory()) {
+                throw new VaultPathError(`Path is a directory, not a file: ${relativePath}`);
+            }
+
             const ext = extname(fullPath).toLowerCase();
             const mimeType = MIME_TYPES[ext] ?? "text/plain";
-            return { content, mimeType };
+            const isText = TEXT_EXTENSIONS.has(ext) || !MIME_TYPES[ext];
+
+            if (isText) {
+                const content = await fsReadFile(fullPath, "utf-8");
+                return { content, mimeType };
+            } else {
+                const buffer = await fsReadFile(fullPath);
+                return { content: buffer.toString("base64"), mimeType, encoding: "base64" };
+            }
         } catch (err) {
+            if (err instanceof VaultPathError) throw err;
             if ((err as NodeJS.ErrnoException).code === "ENOENT") {
                 throw new VaultNotFoundError(`File not found: ${relativePath}`);
             }

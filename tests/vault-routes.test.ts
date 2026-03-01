@@ -197,6 +197,36 @@ describe("Vault file routes", () => {
         expect(res.status).toBe(404);
     });
 
+    it("PUT + GET round-trip with URL-encoded filename (spaces)", async () => {
+        const url = baseUrl(server);
+
+        const putRes = await fetch(`${url}/api/files/my%20notes/hello%20world.md`, {
+            method: "PUT",
+            headers: authHeader(),
+            body: JSON.stringify({ content: "spaced out" }),
+        });
+        expect(putRes.status).toBe(200);
+
+        const getRes = await fetch(`${url}/api/files/my%20notes/hello%20world.md`, {
+            headers: authHeader(),
+        });
+        expect(getRes.status).toBe(200);
+        const body = JSON.parse(getRes.body);
+        expect(body.content).toBe("spaced out");
+    });
+
+    it("GET a directory path returns 400, not 500", async () => {
+        const url = baseUrl(server);
+        mkdirSync(join(VAULT_DIR, "somedir"), { recursive: true });
+
+        const res = await fetch(`${url}/api/files/somedir`, {
+            headers: authHeader(),
+        });
+        expect(res.status).toBe(400);
+        const body = JSON.parse(res.body);
+        expect(body.error).toContain("directory");
+    });
+
     it("PUT without content field returns 400", async () => {
         const url = baseUrl(server);
         const res = await fetch(`${url}/api/files/bad.md`, {
@@ -341,6 +371,17 @@ describe("Vault git routes", () => {
         expect(res.status).toBe(200);
         const body = JSON.parse(res.body);
         expect(body.committed).toBe(false);
+    });
+
+    it("GET /api/git/log returns empty array on empty repo", async () => {
+        const url = baseUrl(server);
+
+        const res = await fetch(`${url}/api/git/log`, {
+            headers: authHeader(),
+        });
+        expect(res.status).toBe(200);
+        const body = JSON.parse(res.body);
+        expect(body.entries).toEqual([]);
     });
 
     it("returns 401 without auth on git routes", async () => {

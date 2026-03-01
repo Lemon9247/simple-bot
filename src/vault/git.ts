@@ -19,7 +19,17 @@ export class VaultGit {
     }
 
     async log(limit: number = 20): Promise<GitLogEntry[]> {
-        const stdout = await this.run("git", ["log", "--oneline", `-${limit}`]);
+        let stdout: string;
+        try {
+            stdout = await this.run("git", ["log", "--oneline", `-${limit}`]);
+        } catch (err) {
+            // Empty repo — git log exits 128 with "does not have any commits yet"
+            const msg = String(err);
+            if (msg.includes("does not have any commits yet") || msg.includes("bad default revision")) {
+                return [];
+            }
+            throw err;
+        }
         if (!stdout.trim()) return [];
 
         return stdout
