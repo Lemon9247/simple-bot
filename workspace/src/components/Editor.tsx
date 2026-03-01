@@ -202,7 +202,7 @@ export default function Editor({ content, onChange, filePath, onSave, fileList }
             state,
             parent: containerRef.current,
         });
-    }, [content, filePath, fileList]);
+    }, [filePath, fileList]);
 
     // Create/recreate editor when filePath changes
     useEffect(() => {
@@ -214,6 +214,15 @@ export default function Editor({ content, onChange, filePath, onSave, fileList }
             }
         };
     }, [createEditor]);
+
+    // Update editor content when prop changes externally (without recreating)
+    useEffect(() => {
+        if (viewRef.current && content !== viewRef.current.state.doc.toString()) {
+            viewRef.current.dispatch({
+                changes: { from: 0, to: viewRef.current.state.doc.length, insert: content }
+            });
+        }
+    }, [content]);
 
     return <div ref={containerRef} className="cm-editor-wrapper" />;
 }

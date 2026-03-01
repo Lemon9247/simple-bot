@@ -4,6 +4,15 @@ import DOMPurify from "dompurify";
 import { fetchFile, putFile, fetchFiles } from "../api";
 import Editor from "./Editor";
 
+const escapeHtml = (str: string) =>
+    str.replace(/[&<>"']/g, (m) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+    }[m]!));
+
 interface FileViewerProps {
     path: string;
     onBack: () => void;
@@ -22,6 +31,9 @@ export default function FileViewer({ path, onBack, onWikiLink, onDirtyChange }: 
     const [saveStatus, setSaveStatus] = useState<SaveStatus>("clean");
     const [fileList, setFileList] = useState<string[]>([]);
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const editModeRef = useRef(editMode);
+    const saveStatusRef = useRef(saveStatus);
+    const handleSaveRef = useRef<() => void>(() => {});
 
     // Load file content
     useEffect(() => {
@@ -76,31 +88,6 @@ export default function FileViewer({ path, onBack, onWikiLink, onDirtyChange }: 
         onDirtyChange?.(saveStatus === "dirty");
     }, [saveStatus, onDirtyChange]);
 
-    // beforeunload guard for unsaved changes
-    useEffect(() => {
-        const handler = (e: BeforeUnloadEvent) => {
-            if (saveStatus === "dirty") {
-                e.preventDefault();
-            }
-        };
-        window.addEventListener("beforeunload", handler);
-        return () => window.removeEventListener("beforeunload", handler);
-    }, [saveStatus]);
-
-    // Ctrl+S prevention at document level (prevent browser save dialog in view mode too)
-    useEffect(() => {
-        const handler = (e: KeyboardEvent) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-                e.preventDefault();
-                if (editMode && saveStatus === "dirty") {
-                    handleSave();
-                }
-            }
-        };
-        document.addEventListener("keydown", handler);
-        return () => document.removeEventListener("keydown", handler);
-    }, [editMode, saveStatus, editedContent, path]);
-
     const isDirty = saveStatus === "dirty";
 
     const handleEditorChange = useCallback((newContent: string) => {
@@ -110,6 +97,7 @@ export default function FileViewer({ path, onBack, onWikiLink, onDirtyChange }: 
 
     const handleSave = useCallback(async () => {
         if (editedContent === null) return;
+        if (saveStatus === "saving") return;
         setSaveStatus("saving");
         try {
             await putFile(path, editedContent);
@@ -121,7 +109,37 @@ export default function FileViewer({ path, onBack, onWikiLink, onDirtyChange }: 
         } catch {
             setSaveStatus("error");
         }
-    }, [editedContent, path]);
+    }, [editedContent, path, saveStatus]);
+
+    // Keep refs in sync for stable event handlers
+    useEffect(() => { editModeRef.current = editMode; }, [editMode]);
+    useEffect(() => { saveStatusRef.current = saveStatus; }, [saveStatus]);
+    useEffect(() => { handleSaveRef.current = handleSave; }, [handleSave]);
+
+    // beforeunload guard for unsaved changes (registered once)
+    useEffect(() => {
+        const handler = (e: BeforeUnloadEvent) => {
+            if (saveStatusRef.current === "dirty") {
+                e.preventDefault();
+            }
+        };
+        window.addEventListener("beforeunload", handler);
+        return () => window.removeEventListener("beforeunload", handler);
+    }, []);
+
+    // Ctrl+S prevention at document level (registered once, reads refs)
+    useEffect(() => {
+        const handler = (e: KeyboardEvent) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+                e.preventDefault();
+                if (editModeRef.current && saveStatusRef.current === "dirty") {
+                    handleSaveRef.current();
+                }
+            }
+        };
+        document.addEventListener("keydown", handler);
+        return () => document.removeEventListener("keydown", handler);
+    }, []);
 
     const handleToggleEdit = useCallback(() => {
         if (editMode && isDirty) {
@@ -147,7 +165,7 @@ export default function FileViewer({ path, onBack, onWikiLink, onDirtyChange }: 
             /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
             (_match, target, display) => {
                 const label = display || target;
-                return `<a class="wiki-link" data-wiki-target="${encodeURIComponent(target)}">${label}</a>`;
+                return `<a class="wiki-link" data-wiki-target="${encodeURIComponent(target)}">${escapeHtml(label)}</a>`;
             }
         );
 
@@ -207,8 +225,8 @@ export default function FileViewer({ path, onBack, onWikiLink, onDirtyChange }: 
                 <span className="file-path">{path}</span>
                 <div className="file-actions">
                     {saveIndicator()}
-                    {editMode && isDirty && (
-                        <button className="save-btn" onClick={handleSave}>
+                    {editMode && (isDirty || saveStatus === "saving") && (
+                        <button className="save-btn" onClick={handleSave} disabled={saveStatus === "saving"}>
                             Save
                         </button>
                     )}

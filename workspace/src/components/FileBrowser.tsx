@@ -9,6 +9,15 @@ interface FileBrowserProps {
     onFileDeleted?: (path: string) => void;
 }
 
+function validateFileName(name: string): string | null {
+    if (!name || name.trim() === "") return "File name cannot be empty";
+    if (name.includes("/") || name.includes("\\")) return "File name cannot contain path separators";
+    if (name.startsWith(".")) return "File name cannot start with a dot";
+    if (name.length > 255) return "File name too long (max 255 characters)";
+    if (name.includes("..")) return "File name cannot contain '..'";
+    return null;
+}
+
 export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated, onFileDeleted }: FileBrowserProps) {
     const [entries, setEntries] = useState<VaultFileEntry[]>([]);
     const [search, setSearch] = useState("");
@@ -76,6 +85,12 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
         const name = window.prompt("New file name:", "untitled.md");
         if (!name) return;
 
+        const validationError = validateFileName(name);
+        if (validationError) {
+            alert(validationError);
+            return;
+        }
+
         // Ensure .md extension if not provided
         const filePath = name.includes(".") ? name : `${name}.md`;
 
@@ -106,6 +121,12 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
         const newName = window.prompt("New name:", entry.name);
         if (!newName || newName === entry.name) return;
 
+        const validationError = validateFileName(newName);
+        if (validationError) {
+            alert(validationError);
+            return;
+        }
+
         // Build new path: same directory, new name
         const parts = entry.path.split("/");
         parts[parts.length - 1] = newName;
@@ -115,7 +136,13 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
             // Copy content to new path, then delete old
             const file = await fetchFile(entry.path);
             await putFile(newPath, file.content);
-            await deleteFile(entry.path);
+            try {
+                await deleteFile(entry.path);
+            } catch (deleteErr) {
+                // Rollback: delete the newly created file
+                await deleteFile(newPath).catch(() => {});
+                throw deleteErr;
+            }
             await loadFiles(search || undefined);
 
             // If renamed file was selected, select the new path
