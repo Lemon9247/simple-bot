@@ -48,7 +48,7 @@ COPY --from=build /app/dist/ dist/
 # Workspace build outputs the Vite SPA to public/
 COPY --from=build /app/public/ public/
 
-COPY scripts/entrypoint.sh /entrypoint.sh
+COPY scripts/entrypoint.example.sh /entrypoint.sh
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8484/health || exit 1

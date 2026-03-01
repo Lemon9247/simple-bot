@@ -14,6 +14,8 @@ The `/health` endpoint is exempt from authentication — it returns `{ "status":
 
 **Auth failures**: Per-IP rate limiting tracks failed authentication attempts. After 10 failures within 60 seconds, **all** requests from that IP receive `429 Too Many Requests` — not just auth attempts. The window expires naturally.
 
+**Reverse proxy support**: Client IPs are extracted from `X-Forwarded-For` (leftmost entry) or `X-Real-IP` headers, falling back to `req.socket.remoteAddress`. Caddy passes these headers by default. Without proxy-aware IP extraction, all requests behind a reverse proxy would appear to come from the proxy's IP, breaking per-IP rate limiting.
+
 **Webhooks**: Per-source rate limiting (10 requests/minute per source, 30 requests/minute globally) prevents webhook abuse.
 
 ## Path Traversal Protection

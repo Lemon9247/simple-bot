@@ -46,6 +46,12 @@ function validate(config: unknown): asserts config is Config {
         if (!c.server.token || typeof c.server.token !== "string") {
             throw new Error("config: server.token is required");
         }
+        if (c.server.cors?.origin === "*") {
+            throw new Error(
+                "config: server.cors.origin cannot be '*' — browsers block credentials (Bearer auth) " +
+                "with wildcard origins. Use an explicit origin like 'https://example.com'."
+            );
+        }
     }
     if (c.vault) {
         if (!c.vault.path || typeof c.vault.path !== "string") {

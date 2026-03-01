@@ -531,6 +531,23 @@ export class HttpServer {
         this.routes.get(path)!.set(method, handler);
     }
 
+    /** Extract real client IP, respecting reverse proxy headers */
+    private getClientIp(req: IncomingMessage): string {
+        // X-Forwarded-For: leftmost entry is the original client
+        const xff = req.headers["x-forwarded-for"];
+        if (xff) {
+            const first = (Array.isArray(xff) ? xff[0] : xff).split(",")[0].trim();
+            if (first) return first;
+        }
+        // X-Real-IP: single IP set by some proxies (e.g. nginx)
+        const xri = req.headers["x-real-ip"];
+        if (xri) {
+            const ip = Array.isArray(xri) ? xri[0] : xri;
+            if (ip) return ip;
+        }
+        return req.socket.remoteAddress ?? "unknown";
+    }
+
     private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
         const url = new URL(req.url ?? "/", `http://localhost`);
         const pathname = url.pathname;
@@ -550,7 +567,7 @@ export class HttpServer {
         }
 
         // Per-IP rate limiting on auth failures
-        const clientIp = req.socket.remoteAddress ?? "unknown";
+        const clientIp = this.getClientIp(req);
         if (this.isAuthRateLimited(clientIp)) {
             this.json(res, 429, { error: "Too many failed auth attempts. Try again later." });
             return;
@@ -780,6 +797,13 @@ export class HttpServer {
         const timestamps = this.webhookRateLimits.get(bucket) ?? [];
         const recent = timestamps.filter((t) => now - t < WEBHOOK_RATE_WINDOW_MS);
 
+        if (recent.length === 0) {
+            this.webhookRateLimits.delete(bucket);
+            // Still need to record this request
+            this.webhookRateLimits.set(bucket, [now]);
+            return false;
+        }
+
         if (recent.length >= max) {
             this.webhookRateLimits.set(bucket, recent);
             return true;
@@ -802,6 +826,12 @@ export class HttpServer {
         if (!timestamps) return false;
         const now = Date.now();
         const recent = timestamps.filter((t) => now - t < AUTH_RATE_WINDOW_MS);
+
+        if (recent.length === 0) {
+            this.authRateLimits.delete(ip);
+            return false;
+        }
+
         this.authRateLimits.set(ip, recent);
         return recent.length >= AUTH_RATE_MAX;
     }
