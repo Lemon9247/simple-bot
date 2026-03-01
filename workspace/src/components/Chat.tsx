@@ -108,28 +108,45 @@ export default function Chat() {
 
     const handleWsMessage = (data: any) => {
         if (!mountedRef.current) return;
-        if (data.type === "content_block_delta" && data.delta?.text) {
-            // Streaming text delta — append to current agent message
-            setMessages((prev) => {
-                const last = prev[prev.length - 1];
-                if (last && last.role === "agent" && last.streaming) {
+
+        // Only show events from websocket-initiated messages
+        if (data.source && data.source !== "websocket") return;
+
+        if (data.type === "agent_start") {
+            // Agent started responding — prepare for streaming
+            return;
+        }
+
+        if (data.type === "message_update") {
+            const delta = data.assistantMessageEvent;
+            if (!delta) return;
+
+            if (delta.type === "text_delta" && delta.delta) {
+                // Streaming text delta — append to current agent message
+                setMessages((prev) => {
+                    const last = prev[prev.length - 1];
+                    if (last && last.role === "agent" && last.streaming) {
+                        return [
+                            ...prev.slice(0, -1),
+                            { ...last, content: last.content + delta.delta },
+                        ];
+                    }
+                    // Start a new streaming message
                     return [
-                        ...prev.slice(0, -1),
-                        { ...last, content: last.content + data.delta.text },
+                        ...prev,
+                        {
+                            id: `agent-${idCounter.current++}`,
+                            role: "agent",
+                            content: delta.delta,
+                            streaming: true,
+                        },
                     ];
-                }
-                // Start a new streaming message
-                return [
-                    ...prev,
-                    {
-                        id: `agent-${idCounter.current++}`,
-                        role: "agent",
-                        content: data.delta.text,
-                        streaming: true,
-                    },
-                ];
-            });
-        } else if (data.type === "message_end") {
+                });
+            }
+            return;
+        }
+
+        if (data.type === "agent_end") {
             // Finalize streaming
             setMessages((prev) => {
                 const last = prev[prev.length - 1];
@@ -138,19 +155,12 @@ export default function Chat() {
                 }
                 return prev;
             });
-        } else if (data.type === "response" && data.id) {
+            return;
+        }
+
+        if (data.type === "response" && data.id) {
             // RPC response — ignore (handled by promise in send)
-        } else if (data.type === "text" || data.type === "message") {
-            // Full text message from agent
-            setMessages((prev) => [
-                ...prev,
-                {
-                    id: `agent-${idCounter.current++}`,
-                    role: "agent",
-                    content: data.text || data.content || JSON.stringify(data),
-                    streaming: false,
-                },
-            ]);
+            return;
         }
     };
 
@@ -169,8 +179,8 @@ export default function Chat() {
         // Send via WebSocket RPC
         wsRef.current.send(JSON.stringify({
             id,
-            type: "send_message",
-            text,
+            type: "prompt",
+            message: text,
         }));
 
         setInput("");
