@@ -95,10 +95,11 @@ export class Tracker {
         inputTokens: number;
         outputTokens: number;
         contextSize: number;
+        cost?: number;
         sessionName?: string;
     }): UsageEvent {
         const compaction = this.detectCompaction(data.contextSize);
-        const cost = this.estimateCost(data.model, data.inputTokens, data.outputTokens);
+        const cost = data.cost ?? this.estimateCost(data.model, data.inputTokens, data.outputTokens);
 
         const event: UsageEvent = {
             timestamp: Date.now(),
@@ -137,6 +138,13 @@ export class Tracker {
     week(): UsageSummary {
         const cutoff = Date.now() - 7 * MS_PER_DAY;
         return this.aggregate((e) => e.timestamp >= cutoff);
+    }
+
+    /** Update context size without recording a new usage event. */
+    updateContextSize(contextSize: number, _sessionName?: string): void {
+        if (contextSize > 0) {
+            this.lastContextSize = contextSize;
+        }
     }
 
     /** Latest context size from the most recent event. */

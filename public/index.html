@@ -416,7 +416,7 @@
             // ─── Config ───────────────────────────────────────
             const CONTEXT_WINDOW = 200000; // estimated max context tokens
             const REFRESH_FAST = 5000;     // activity: 5s
-            const REFRESH_SLOW = 30000;    // status/usage/cron/logs: 30s
+            const REFRESH_SLOW = 15000;    // status/usage/cron/logs: 15s
 
             // ─── State ────────────────────────────────────────
             let token = '';
@@ -604,6 +604,14 @@
                     $('us-week-cost').textContent = '$' + d.week.cost.toFixed(4);
                     $('us-msgs').textContent = d.today.messageCount;
                     $('us-tokens').textContent = formatTokens(d.today.inputTokens) + ' / ' + formatTokens(d.today.outputTokens);
+
+                    // Update context gauge from usage endpoint
+                    const ctx = d.contextSize || 0;
+                    const pct = Math.min(100, Math.round((ctx / CONTEXT_WINDOW) * 100));
+                    $('st-ctx-pct').textContent = pct + '%';
+                    $('ctx-bar').style.width = pct + '%';
+                    $('ctx-bar').style.background = gaugeColor(pct);
+                    $('ctx-used').textContent = formatTokens(ctx);
                 } catch { /* ignore */ }
             }
 

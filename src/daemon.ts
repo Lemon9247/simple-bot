@@ -217,7 +217,7 @@ export class Daemon implements DaemonRef, DashboardProvider {
 
         // Track usage and forward events from all sessions
         this.sessionManager.on("session:event", (_sessionName: string, event: any) => {
-            if (event.type === "agent_end") {
+            if (event.type === "message_end") {
                 this.recordUsage(event, _sessionName);
             }
             // Forward all session events to WebSocket clients
@@ -538,44 +538,24 @@ export class Daemon implements DaemonRef, DashboardProvider {
     }
 
     private recordUsage(event: any, sessionName: string): void {
-        // Extract usage data from agent_end event if available
-        const usage = event.usage ?? event.stats ?? {};
-        const model = usage.model ?? event.model ?? "unknown";
-        const inputTokens = usage.inputTokens ?? usage.input_tokens ?? 0;
-        const outputTokens = usage.outputTokens ?? usage.output_tokens ?? 0;
-        const contextSize = usage.contextSize ?? usage.context_size ?? usage.totalTokens ?? usage.total_tokens ?? 0;
+        if (event.type !== "message_end") return;
 
-        // If event has no usage data at all, query get_state for context size
-        const bridge = this.sessionManager.getSession(sessionName);
-        if (contextSize === 0 && bridge?.running) {
-            bridge.command("get_state").then((state: any) => {
-                const ctxSize = state?.contextSize ?? state?.context_size ?? state?.totalTokens ?? 0;
-                const recorded = this.tracker.record({ model, inputTokens, outputTokens, contextSize: ctxSize, sessionName });
-                logger.info("Usage recorded (via get_state)", {
-                    session: sessionName,
-                    model: recorded.model,
-                    inputTokens: recorded.inputTokens,
-                    outputTokens: recorded.outputTokens,
-                    contextSize: recorded.contextSize,
-                    cost: recorded.cost.toFixed(6),
-                    compaction: recorded.compaction,
-                });
-            }).catch((err: Error) => {
-                // Still record with zero context if get_state fails
-                const recorded = this.tracker.record({ model, inputTokens, outputTokens, contextSize: 0, sessionName });
-                logger.warn("Usage recorded without context size", {
-                    session: sessionName,
-                    model: recorded.model,
-                    inputTokens: recorded.inputTokens,
-                    outputTokens: recorded.outputTokens,
-                    cost: recorded.cost.toFixed(6),
-                    error: String(err),
-                });
-            });
-            return;
-        }
+        // message_end has per-message usage: { input, output, cacheRead, cacheWrite, cost }
+        const msg = event.message;
+        if (!msg || msg.role !== "assistant") return;
 
-        const recorded = this.tracker.record({ model, inputTokens, outputTokens, contextSize, sessionName });
+        const usage = msg.usage ?? {};
+        const model = msg.model ?? "unknown";
+        const inputTokens = (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
+        const outputTokens = usage.output ?? 0;
+
+        // Context size = total tokens the model saw for this response
+        const contextSize = usage.totalTokens || (inputTokens + outputTokens);
+
+        // Use pi's reported cost directly instead of estimating from rates
+        const cost = usage.cost?.total ?? 0;
+
+        const recorded = this.tracker.record({ model, inputTokens, outputTokens, contextSize, cost, sessionName });
         logger.info("Usage recorded", {
             session: sessionName,
             model: recorded.model,
@@ -583,7 +563,6 @@ export class Daemon implements DaemonRef, DashboardProvider {
             outputTokens: recorded.outputTokens,
             contextSize: recorded.contextSize,
             cost: recorded.cost.toFixed(6),
-            compaction: recorded.compaction,
         });
     }
 

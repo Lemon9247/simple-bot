@@ -11,6 +11,7 @@ export interface DaemonRef {
     getSchedulerStatus(): { total: number; enabled: number; names: string[] };
     getThinkingEnabled(sessionName?: string): boolean;
     setThinkingEnabled(sessionName: string, enabled: boolean): void;
+    getContextSize(): number;
     getUsageStats(): {
         today: { inputTokens: number; outputTokens: number; cost: number; messageCount: number };
         week: { cost: number };
@@ -200,15 +201,19 @@ export const statusCommand: Command = {
     async execute({ bridge, reply, daemon, sessionName, sessionManager }) {
         const uptimeStr = daemon ? formatUptime(daemon.getUptime()) : "unknown";
 
-        // Get model and context info via get_state RPC (P3-T4)
+        // Get model from get_state RPC, context from usage tracker
         let modelName = "unknown";
         let contextTokens = "?";
         try {
             const state = await bridge.command("get_state");
-            if (state?.model?.name) modelName = state.model.name;
-            if (state?.contextTokens != null) contextTokens = `~${Math.round(state.contextTokens / 1000)}k`;
+            if (state?.model?.id) modelName = state.model.id;
+            else if (state?.model?.name) modelName = state.model.name;
         } catch {
             // pi not responding — use defaults
+        }
+        if (daemon) {
+            const ctx = daemon.getContextSize();
+            if (ctx > 0) contextTokens = `~${Math.round(ctx / 1000)}k`;
         }
 
         let cronLine = "";
@@ -284,25 +289,27 @@ export const thinkCommand: Command = {
         }
         const name = sessionName ?? "main";
         const arg = args.toLowerCase().trim();
-        if (arg === "on") {
+        if (arg === "on" || arg === "off") {
+            const level = arg === "on" ? "medium" : "off";
             try {
-                await bridge.command("set_model_config", { thinking: true });
-                daemon.setThinkingEnabled(name, true);
-                await reply(`🧠 Extended thinking **enabled** for session **${name}**.`);
+                await bridge.command("set_thinking_level", { level });
+                daemon.setThinkingEnabled(name, arg === "on");
+                const label = arg === "on" ? `**enabled** (${level})` : "**disabled**";
+                await reply(`🧠 Extended thinking ${label} for session **${name}**.`);
             } catch (err) {
-                await reply(`❌ Failed to enable thinking: ${String(err)}`);
+                await reply(`❌ Failed to set thinking level: ${String(err)}`);
             }
-        } else if (arg === "off") {
+        } else if (["minimal", "low", "medium", "high"].includes(arg)) {
             try {
-                await bridge.command("set_model_config", { thinking: false });
-                daemon.setThinkingEnabled(name, false);
-                await reply(`🧠 Extended thinking **disabled** for session **${name}**.`);
+                await bridge.command("set_thinking_level", { level: arg });
+                daemon.setThinkingEnabled(name, true);
+                await reply(`🧠 Extended thinking set to **${arg}** for session **${name}**.`);
             } catch (err) {
-                await reply(`❌ Failed to disable thinking: ${String(err)}`);
+                await reply(`❌ Failed to set thinking level: ${String(err)}`);
             }
         } else {
             const state = daemon.getThinkingEnabled(name) ? "on" : "off";
-            await reply(`🧠 Extended thinking is currently **${state}** for session **${name}**.\nUsage: \`bot!think on|off\``);
+            await reply(`🧠 Extended thinking is currently **${state}** for session **${name}**.\nUsage: \`bot!think on|off|minimal|low|medium|high\``);
         }
     },
 };
@@ -328,7 +335,7 @@ export const configCommand: Command = {
         }
 
         const section = parts[0];
-        const configAny = config as Record<string, unknown>;
+        const configAny = config as unknown as Record<string, unknown>;
 
         // bot!config <section> — show specific section
         if (parts.length === 1) {

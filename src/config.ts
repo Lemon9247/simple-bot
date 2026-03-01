@@ -137,8 +137,8 @@ export function redactConfig(config: Config): ConfigRedacted {
 export function diffConfig(oldConfig: Config, newConfig: Config): ConfigDiff {
     const changes: ConfigChange[] = [];
 
-    const oldFlat = flattenObject(oldConfig as Record<string, unknown>);
-    const newFlat = flattenObject(newConfig as Record<string, unknown>);
+    const oldFlat = flattenObject(oldConfig as unknown as Record<string, unknown>);
+    const newFlat = flattenObject(newConfig as unknown as Record<string, unknown>);
 
     const allKeys = new Set([...Object.keys(oldFlat), ...Object.keys(newFlat)]);
 
@@ -213,7 +213,7 @@ function deepEqual(a: unknown, b: unknown): boolean {
 
 /** Merge a partial config into the existing config (shallow per top-level section) */
 export function mergeConfig(base: Config, partial: Record<string, unknown>): Config {
-    const merged = structuredClone(base) as Record<string, unknown>;
+    const merged = structuredClone(base) as unknown as Record<string, unknown>;
 
     for (const [section, value] of Object.entries(partial)) {
         if (value && typeof value === "object" && !Array.isArray(value) &&
@@ -224,7 +224,7 @@ export function mergeConfig(base: Config, partial: Record<string, unknown>): Con
         }
     }
 
-    return merged as Config;
+    return merged as unknown as Config;
 }
 
 /** Serialize config back to YAML (stripping undefined values) */
