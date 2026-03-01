@@ -172,8 +172,14 @@ body {
     border-bottom: 1px solid var(--border);
 }
 
+.sidebar-header-row {
+    display: flex;
+    gap: 0.35rem;
+}
+
 .sidebar-search {
-    width: 100%;
+    flex: 1;
+    min-width: 0;
     background: var(--bg);
     border: 1px solid var(--border);
     color: var(--text);
@@ -184,6 +190,61 @@ body {
 }
 
 .sidebar-search:focus { border-color: var(--accent); }
+
+.new-file-btn {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    font-size: 1rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    line-height: 1;
+}
+
+.new-file-btn:hover { color: var(--accent); border-color: var(--accent); }
+
+/* ─── Context Menu ─────────────────────────────────────────── */
+.context-menu {
+    position: fixed;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.25rem;
+    z-index: 100;
+    min-width: 120px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.context-menu button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--text);
+    padding: 0.35rem 0.6rem;
+    font-size: 0.82rem;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.context-menu button:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.context-menu button.danger {
+    color: var(--red);
+}
+
+.context-menu button.danger:hover {
+    background: rgba(248, 81, 73, 0.1);
+}
 
 .file-tree {
     flex: 1;
@@ -455,6 +516,12 @@ body {
     padding: 0;
 }
 
+.file-viewer.edit-mode {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 40px - 2rem);
+}
+
 .file-breadcrumb {
     display: flex;
     align-items: center;
@@ -463,6 +530,7 @@ body {
     margin-bottom: 0.75rem;
     border-bottom: 1px solid var(--border);
     font-size: 0.85rem;
+    flex-shrink: 0;
 }
 
 .file-breadcrumb .back-btn {
@@ -481,6 +549,57 @@ body {
     color: var(--text-dim);
     font-family: var(--font-mono);
     font-size: 0.8rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.file-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+.save-btn {
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    padding: 0.15rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.save-btn:hover { opacity: 0.85; }
+
+.save-indicator {
+    font-size: 0.75rem;
+    white-space: nowrap;
+}
+
+.save-indicator.dirty { color: var(--yellow); }
+.save-indicator.saving { color: var(--text-dim); }
+.save-indicator.saved { color: var(--green); }
+.save-indicator.error { color: var(--red); }
+
+/* ─── Editor Container ────────────────────────────────────── */
+.editor-container {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+}
+
+.cm-editor-wrapper {
+    height: 100%;
+}
+
+.cm-editor-wrapper .cm-editor {
+    height: 100%;
 }
 
 .file-content-pre {

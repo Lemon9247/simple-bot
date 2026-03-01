@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import FileBrowser from "./FileBrowser";
 import Dashboard from "./Dashboard";
 import FileViewer from "./FileViewer";
@@ -13,6 +13,9 @@ export default function Layout() {
         typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches
     );
 
+    // Track dirty state from FileViewer
+    const dirtyRef = useRef(false);
+
     useEffect(() => {
         const mediaQuery = window.matchMedia("(max-width: 768px)");
         const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
@@ -20,20 +23,48 @@ export default function Layout() {
         return () => mediaQuery.removeEventListener("change", handler);
     }, []);
 
-    const handleFileSelect = (path: string) => {
+    const confirmIfDirty = useCallback((): boolean => {
+        if (!dirtyRef.current) return true;
+        return window.confirm("You have unsaved changes. Discard?");
+    }, []);
+
+    const handleFileSelect = useCallback((path: string) => {
+        if (path === selectedFile) return;
+        if (!confirmIfDirty()) return;
+        dirtyRef.current = false;
         setSelectedFile(path);
         if (isMobile) setMobileOverlay(null);
-    };
+    }, [selectedFile, confirmIfDirty, isMobile]);
 
-    const handleBack = () => {
+    const handleBack = useCallback(() => {
+        if (!confirmIfDirty()) return;
+        dirtyRef.current = false;
         setSelectedFile(null);
-    };
+    }, [confirmIfDirty]);
 
-    const handleWikiLink = (target: string) => {
-        // Resolve wiki-link: try with .md extension
+    const handleWikiLink = useCallback((target: string) => {
+        if (!confirmIfDirty()) return;
+        dirtyRef.current = false;
         const path = target.endsWith(".md") ? target : `${target}.md`;
         setSelectedFile(path);
-    };
+    }, [confirmIfDirty]);
+
+    const handleDirtyChange = useCallback((dirty: boolean) => {
+        dirtyRef.current = dirty;
+    }, []);
+
+    const handleFileCreated = useCallback((path: string) => {
+        if (!confirmIfDirty()) return;
+        dirtyRef.current = false;
+        setSelectedFile(path);
+    }, [confirmIfDirty]);
+
+    const handleFileDeleted = useCallback((path: string) => {
+        if (selectedFile === path) {
+            dirtyRef.current = false;
+            setSelectedFile(null);
+        }
+    }, [selectedFile]);
 
     const toggleSidebar = () => {
         if (isMobile) {
@@ -82,6 +113,8 @@ export default function Layout() {
                         <FileBrowser
                             selectedFile={selectedFile}
                             onFileSelect={handleFileSelect}
+                            onFileCreated={handleFileCreated}
+                            onFileDeleted={handleFileDeleted}
                         />
                     </div>
                 )}
@@ -94,6 +127,7 @@ export default function Layout() {
                                 path={selectedFile}
                                 onBack={handleBack}
                                 onWikiLink={handleWikiLink}
+                                onDirtyChange={handleDirtyChange}
                             />
                         ) : (
                             <Dashboard />

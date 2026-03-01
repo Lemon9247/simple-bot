@@ -1,17 +1,21 @@
-import { useState, useEffect, useCallback } from "react";
-import { fetchFiles } from "../api";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { fetchFiles, putFile, deleteFile, fetchFile } from "../api";
 import type { VaultFileEntry } from "../api";
 
 interface FileBrowserProps {
     selectedFile: string | null;
     onFileSelect: (path: string) => void;
+    onFileCreated?: (path: string) => void;
+    onFileDeleted?: (path: string) => void;
 }
 
-export default function FileBrowser({ selectedFile, onFileSelect }: FileBrowserProps) {
+export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated, onFileDeleted }: FileBrowserProps) {
     const [entries, setEntries] = useState<VaultFileEntry[]>([]);
     const [search, setSearch] = useState("");
     const [expanded, setExpanded] = useState<Set<string>>(new Set());
     const [loading, setLoading] = useState(false);
+    const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: VaultFileEntry } | null>(null);
+    const contextMenuRef = useRef<HTMLDivElement>(null);
 
     const loadFiles = useCallback(async (searchQuery?: string) => {
         setLoading(true);
@@ -36,6 +40,26 @@ export default function FileBrowser({ selectedFile, onFileSelect }: FileBrowserP
         return () => clearTimeout(timeout);
     }, [search, loadFiles]);
 
+    // Close context menu on click outside
+    useEffect(() => {
+        const handler = (e: MouseEvent) => {
+            if (contextMenu && contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
+                setContextMenu(null);
+            }
+        };
+        document.addEventListener("mousedown", handler);
+        return () => document.removeEventListener("mousedown", handler);
+    }, [contextMenu]);
+
+    // Close context menu on Escape
+    useEffect(() => {
+        const handler = (e: KeyboardEvent) => {
+            if (e.key === "Escape") setContextMenu(null);
+        };
+        document.addEventListener("keydown", handler);
+        return () => document.removeEventListener("keydown", handler);
+    }, []);
+
     const toggleDir = (path: string) => {
         setExpanded((prev) => {
             const next = new Set(prev);
@@ -46,6 +70,69 @@ export default function FileBrowser({ selectedFile, onFileSelect }: FileBrowserP
             }
             return next;
         });
+    };
+
+    const handleCreateFile = async () => {
+        const name = window.prompt("New file name:", "untitled.md");
+        if (!name) return;
+
+        // Ensure .md extension if not provided
+        const filePath = name.includes(".") ? name : `${name}.md`;
+
+        try {
+            await putFile(filePath, "");
+            await loadFiles(search || undefined);
+            onFileCreated?.(filePath);
+        } catch (err) {
+            alert(`Failed to create file: ${err instanceof Error ? err.message : "Unknown error"}`);
+        }
+    };
+
+    const handleDeleteFile = async (entry: VaultFileEntry) => {
+        setContextMenu(null);
+        if (!window.confirm(`Delete "${entry.path}"? This cannot be undone.`)) return;
+
+        try {
+            await deleteFile(entry.path);
+            await loadFiles(search || undefined);
+            onFileDeleted?.(entry.path);
+        } catch (err) {
+            alert(`Failed to delete: ${err instanceof Error ? err.message : "Unknown error"}`);
+        }
+    };
+
+    const handleRenameFile = async (entry: VaultFileEntry) => {
+        setContextMenu(null);
+        const newName = window.prompt("New name:", entry.name);
+        if (!newName || newName === entry.name) return;
+
+        // Build new path: same directory, new name
+        const parts = entry.path.split("/");
+        parts[parts.length - 1] = newName;
+        const newPath = parts.join("/");
+
+        try {
+            // Copy content to new path, then delete old
+            const file = await fetchFile(entry.path);
+            await putFile(newPath, file.content);
+            await deleteFile(entry.path);
+            await loadFiles(search || undefined);
+
+            // If renamed file was selected, select the new path
+            if (selectedFile === entry.path) {
+                onFileCreated?.(newPath);
+            }
+            // If renamed file was selected, notify deletion of old
+            onFileDeleted?.(entry.path);
+        } catch (err) {
+            alert(`Failed to rename: ${err instanceof Error ? err.message : "Unknown error"}`);
+        }
+    };
+
+    const handleContextMenu = (e: React.MouseEvent, entry: VaultFileEntry) => {
+        if (entry.type === "dir") return;
+        e.preventDefault();
+        setContextMenu({ x: e.clientX, y: e.clientY, entry });
     };
 
     const renderEntry = (entry: VaultFileEntry, depth: number): React.ReactNode => {
@@ -64,6 +151,7 @@ export default function FileBrowser({ selectedFile, onFileSelect }: FileBrowserP
                             onFileSelect(entry.path);
                         }
                     }}
+                    onContextMenu={(e) => handleContextMenu(e, entry)}
                 >
                     <span className={`tree-icon ${isDir ? "dir" : ""}`}>
                         {isDir ? (isExpanded ? "▼" : "▶") : "📄"}
@@ -80,13 +168,22 @@ export default function FileBrowser({ selectedFile, onFileSelect }: FileBrowserP
     return (
         <>
             <div className="sidebar-header">
-                <input
-                    className="sidebar-search"
-                    type="text"
-                    placeholder="Search files…"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                />
+                <div className="sidebar-header-row">
+                    <input
+                        className="sidebar-search"
+                        type="text"
+                        placeholder="Search files…"
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                    />
+                    <button
+                        className="new-file-btn"
+                        onClick={handleCreateFile}
+                        title="New file"
+                    >
+                        +
+                    </button>
+                </div>
             </div>
             <div className="file-tree">
                 {loading && entries.length === 0 ? (
@@ -97,6 +194,22 @@ export default function FileBrowser({ selectedFile, onFileSelect }: FileBrowserP
                     entries.map((entry) => renderEntry(entry, 0))
                 )}
             </div>
+
+            {/* Context menu */}
+            {contextMenu && (
+                <div
+                    ref={contextMenuRef}
+                    className="context-menu"
+                    style={{ left: contextMenu.x, top: contextMenu.y }}
+                >
+                    <button onClick={() => handleRenameFile(contextMenu.entry)}>
+                        Rename
+                    </button>
+                    <button className="danger" onClick={() => handleDeleteFile(contextMenu.entry)}>
+                        Delete
+                    </button>
+                </div>
+            )}
         </>
     );
 }

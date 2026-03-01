@@ -1,28 +1,42 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import { fetchFile } from "../api";
+import { fetchFile, putFile, fetchFiles } from "../api";
+import Editor from "./Editor";
 
 interface FileViewerProps {
     path: string;
     onBack: () => void;
     onWikiLink: (target: string) => void;
+    onDirtyChange?: (dirty: boolean) => void;
 }
 
-export default function FileViewer({ path, onBack, onWikiLink }: FileViewerProps) {
+type SaveStatus = "clean" | "dirty" | "saving" | "saved" | "error";
+
+export default function FileViewer({ path, onBack, onWikiLink, onDirtyChange }: FileViewerProps) {
     const [content, setContent] = useState<string | null>(null);
+    const [editedContent, setEditedContent] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [editMode, setEditMode] = useState(false);
+    const [saveStatus, setSaveStatus] = useState<SaveStatus>("clean");
+    const [fileList, setFileList] = useState<string[]>([]);
+    const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+    // Load file content
     useEffect(() => {
         let cancelled = false;
         setLoading(true);
         setError(null);
+        setEditMode(false);
+        setSaveStatus("clean");
+        setEditedContent(null);
 
         fetchFile(path)
             .then((res) => {
                 if (!cancelled) {
                     setContent(res.content);
+                    setEditedContent(res.content);
                     setLoading(false);
                 }
             })
@@ -36,13 +50,97 @@ export default function FileViewer({ path, onBack, onWikiLink }: FileViewerProps
         return () => { cancelled = true; };
     }, [path]);
 
+    // Load file list for wiki-link autocomplete
+    useEffect(() => {
+        let cancelled = false;
+        fetchFiles()
+            .then((res) => {
+                if (!cancelled) {
+                    const paths: string[] = [];
+                    const collect = (entries: typeof res.entries) => {
+                        for (const e of entries) {
+                            if (e.type === "file") paths.push(e.path);
+                            if (e.children) collect(e.children);
+                        }
+                    };
+                    collect(res.entries || []);
+                    setFileList(paths);
+                }
+            })
+            .catch(() => {});
+        return () => { cancelled = true; };
+    }, []);
+
+    // Notify parent of dirty state
+    useEffect(() => {
+        onDirtyChange?.(saveStatus === "dirty");
+    }, [saveStatus, onDirtyChange]);
+
+    // beforeunload guard for unsaved changes
+    useEffect(() => {
+        const handler = (e: BeforeUnloadEvent) => {
+            if (saveStatus === "dirty") {
+                e.preventDefault();
+            }
+        };
+        window.addEventListener("beforeunload", handler);
+        return () => window.removeEventListener("beforeunload", handler);
+    }, [saveStatus]);
+
+    // Ctrl+S prevention at document level (prevent browser save dialog in view mode too)
+    useEffect(() => {
+        const handler = (e: KeyboardEvent) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+                e.preventDefault();
+                if (editMode && saveStatus === "dirty") {
+                    handleSave();
+                }
+            }
+        };
+        document.addEventListener("keydown", handler);
+        return () => document.removeEventListener("keydown", handler);
+    }, [editMode, saveStatus, editedContent, path]);
+
+    const isDirty = saveStatus === "dirty";
+
+    const handleEditorChange = useCallback((newContent: string) => {
+        setEditedContent(newContent);
+        setSaveStatus("dirty");
+    }, []);
+
+    const handleSave = useCallback(async () => {
+        if (editedContent === null) return;
+        setSaveStatus("saving");
+        try {
+            await putFile(path, editedContent);
+            setContent(editedContent);
+            setSaveStatus("saved");
+            // Reset "Saved" indicator after 2s
+            if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+            saveTimerRef.current = setTimeout(() => setSaveStatus("clean"), 2000);
+        } catch {
+            setSaveStatus("error");
+        }
+    }, [editedContent, path]);
+
+    const handleToggleEdit = useCallback(() => {
+        if (editMode && isDirty) {
+            if (!window.confirm("You have unsaved changes. Discard?")) return;
+            // Revert to last saved content
+            setEditedContent(content);
+            setSaveStatus("clean");
+        }
+        setEditMode((prev) => !prev);
+    }, [editMode, isDirty, content]);
+
     const isMarkdown = path.endsWith(".md");
 
     const renderedHtml = useMemo(() => {
-        if (!content || !isMarkdown) return "";
+        const source = editMode ? editedContent : content;
+        if (!source || !isMarkdown) return "";
 
         // Strip YAML frontmatter before rendering
-        const stripped = content.replace(/^---\n[\s\S]*?\n---\n/, '');
+        const stripped = source.replace(/^---\n[\s\S]*?\n---\n/, "");
 
         // Replace wiki-links with clickable spans before markdown parsing
         const withWikiLinks = stripped.replace(
@@ -55,7 +153,7 @@ export default function FileViewer({ path, onBack, onWikiLink }: FileViewerProps
 
         const rawHtml = marked.parse(withWikiLinks) as string;
         return DOMPurify.sanitize(rawHtml);
-    }, [content, isMarkdown]);
+    }, [content, editedContent, isMarkdown, editMode]);
 
     const handleClick = (e: React.MouseEvent) => {
         const target = (e.target as HTMLElement).closest(".wiki-link") as HTMLElement | null;
@@ -65,6 +163,16 @@ export default function FileViewer({ path, onBack, onWikiLink }: FileViewerProps
             if (wikiTarget) {
                 onWikiLink(wikiTarget);
             }
+        }
+    };
+
+    const saveIndicator = () => {
+        switch (saveStatus) {
+            case "dirty": return <span className="save-indicator dirty">● Unsaved</span>;
+            case "saving": return <span className="save-indicator saving">Saving…</span>;
+            case "saved": return <span className="save-indicator saved">✓ Saved</span>;
+            case "error": return <span className="save-indicator error">Save failed</span>;
+            default: return null;
         }
     };
 
@@ -93,12 +201,38 @@ export default function FileViewer({ path, onBack, onWikiLink }: FileViewerProps
     }
 
     return (
-        <div className="file-viewer">
+        <div className={`file-viewer ${editMode ? "edit-mode" : ""}`}>
             <div className="file-breadcrumb">
                 <button className="back-btn" onClick={onBack}>← Back</button>
                 <span className="file-path">{path}</span>
+                <div className="file-actions">
+                    {saveIndicator()}
+                    {editMode && isDirty && (
+                        <button className="save-btn" onClick={handleSave}>
+                            Save
+                        </button>
+                    )}
+                    {isMarkdown && (
+                        <button
+                            className={`toggle-btn ${editMode ? "active" : ""}`}
+                            onClick={handleToggleEdit}
+                        >
+                            {editMode ? "View" : "Edit"}
+                        </button>
+                    )}
+                </div>
             </div>
-            {isMarkdown ? (
+            {editMode && isMarkdown ? (
+                <div className="editor-container">
+                    <Editor
+                        content={editedContent ?? ""}
+                        onChange={handleEditorChange}
+                        filePath={path}
+                        onSave={handleSave}
+                        fileList={fileList}
+                    />
+                </div>
+            ) : isMarkdown ? (
                 <div
                     className="markdown-body"
                     dangerouslySetInnerHTML={{ __html: renderedHtml }}
@@ -109,4 +243,20 @@ export default function FileViewer({ path, onBack, onWikiLink }: FileViewerProps
             )}
         </div>
     );
+}
+
+/** Check if the FileViewer currently has unsaved changes — exposed for Layout */
+export function useUnsavedGuard(): {
+    hasUnsaved: boolean;
+    setHasUnsaved: (v: boolean) => void;
+    confirmDiscard: () => boolean;
+} {
+    const [hasUnsaved, setHasUnsaved] = useState(false);
+
+    const confirmDiscard = useCallback(() => {
+        if (!hasUnsaved) return true;
+        return window.confirm("You have unsaved changes. Discard?");
+    }, [hasUnsaved]);
+
+    return { hasUnsaved, setHasUnsaved, confirmDiscard };
 }
