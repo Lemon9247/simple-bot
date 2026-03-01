@@ -1,14 +1,22 @@
+import { writeFileSync, copyFileSync, renameSync } from "node:fs";
+import yaml from "js-yaml";
 import type { Bridge } from "./bridge.js";
+import type { ConfigWatcher } from "./config-watcher.js";
+import type { SessionManager } from "./session-manager.js";
+import { redactConfig, serializeConfig, loadConfig } from "./config.js";
+import type { Config } from "./types.js";
 
 export interface DaemonRef {
     getUptime(): number;
     getSchedulerStatus(): { total: number; enabled: number; names: string[] };
-    getThinkingEnabled(): boolean;
-    setThinkingEnabled(enabled: boolean): void;
+    getThinkingEnabled(sessionName?: string): boolean;
+    setThinkingEnabled(sessionName: string, enabled: boolean): void;
     getUsageStats(): {
         today: { inputTokens: number; outputTokens: number; cost: number; messageCount: number };
         week: { cost: number };
     } | null;
+    getConfigWatcher?(): ConfigWatcher | undefined;
+    getConfigPath?(): string | undefined;
 }
 
 export interface CommandContext {
@@ -16,6 +24,8 @@ export interface CommandContext {
     bridge: Bridge;
     reply: (text: string) => Promise<void>;
     daemon?: DaemonRef;
+    sessionName?: string;
+    sessionManager?: SessionManager;
 }
 
 export interface Command {
@@ -123,16 +133,71 @@ export const commandMap = new Map<string, Command>(
 export const rebootCommand: Command = {
     name: "reboot",
     interrupts: true,
-    async execute({ bridge, reply }) {
-        await reply("🔄 Rebooting pi process...");
-        await bridge.restart();
-        await reply("✅ Rebooted.");
+    async execute({ args, bridge, reply, sessionName, sessionManager }) {
+        const target = args.trim();
+
+        if (!target) {
+            // bot!reboot — reboot the resolved session for this channel
+            const name = sessionName ?? "main";
+            await reply(`🔄 Rebooting session **${name}**...`);
+            await bridge.restart();
+            await reply(`✅ Session **${name}** rebooted.`);
+            return;
+        }
+
+        if (!sessionManager) {
+            // Fallback: no session manager, just reboot the current bridge
+            await reply("🔄 Rebooting pi process...");
+            await bridge.restart();
+            await reply("✅ Rebooted.");
+            return;
+        }
+
+        if (target.toLowerCase() === "all") {
+            // bot!reboot all — reboot all sessions
+            const names = sessionManager.getSessionNames();
+            const running = names.filter((n) => sessionManager.getSession(n) !== null);
+            if (running.length === 0) {
+                await reply("ℹ️ No sessions are currently running.");
+                return;
+            }
+            await reply(`🔄 Rebooting ${running.length} session(s)...`);
+            const results: string[] = [];
+            for (const name of running) {
+                try {
+                    await sessionManager.stopSession(name);
+                    await sessionManager.getOrStartSession(name);
+                    results.push(`✅ **${name}**`);
+                } catch (err) {
+                    results.push(`❌ **${name}**: ${String(err)}`);
+                }
+            }
+            await reply(results.join("\n"));
+            return;
+        }
+
+        // bot!reboot <name> — reboot a specific session
+        const names = sessionManager.getSessionNames();
+        const targetLower = target.toLowerCase();
+        const matchedName = names.find((n) => n.toLowerCase() === targetLower);
+        if (!matchedName) {
+            await reply(`❌ Unknown session: \`${target}\`. Available: ${names.join(", ")}`);
+            return;
+        }
+        await reply(`🔄 Rebooting session **${matchedName}**...`);
+        try {
+            await sessionManager.stopSession(matchedName);
+            await sessionManager.getOrStartSession(matchedName);
+            await reply(`✅ Session **${matchedName}** rebooted.`);
+        } catch (err) {
+            await reply(`❌ Failed to reboot session **${matchedName}**: ${String(err)}`);
+        }
     },
 };
 
 export const statusCommand: Command = {
     name: "status",
-    async execute({ bridge, reply, daemon }) {
+    async execute({ bridge, reply, daemon, sessionName, sessionManager }) {
         const uptimeStr = daemon ? formatUptime(daemon.getUptime()) : "unknown";
 
         // Get model and context info via get_state RPC (P3-T4)
@@ -172,43 +237,193 @@ export const statusCommand: Command = {
         if (usageLine) lines.splice(1, 0, usageLine);
         if (cronLine) lines.splice(usageLine ? 2 : 1, 0, cronLine.trim());
 
+        // Show session info when multiple sessions are configured
+        if (sessionManager) {
+            const names = sessionManager.getSessionNames();
+            if (names.length > 1) {
+                const currentSession = sessionName ?? sessionManager.getDefaultSessionName();
+                const sessionLines: string[] = [];
+                for (const name of names) {
+                    const info = sessionManager.getSessionInfo(name);
+                    const stateIcon = info?.state === "running" ? "🟢" : info?.state === "starting" ? "🟡" : "⚪";
+                    const currentMarker = name === currentSession ? " ← this channel" : "";
+                    let sessionDetail = `  ${stateIcon} **${name}**${currentMarker}`;
+
+                    // Get per-session model/context if running
+                    if (info?.state === "running" && info.bridge) {
+                        try {
+                            const sessionState = await info.bridge.command("get_state");
+                            const sModel = sessionState?.model?.name ?? "unknown";
+                            const sCtx = sessionState?.contextTokens != null
+                                ? `~${Math.round(sessionState.contextTokens / 1000)}k`
+                                : "?";
+                            sessionDetail += ` | ${sModel} | ${sCtx} tokens`;
+                        } catch {
+                            sessionDetail += " | (not responding)";
+                        }
+                    }
+
+                    sessionLines.push(sessionDetail);
+                }
+                lines.push("");
+                lines.push(`📡 Sessions (${names.length}):`);
+                lines.push(...sessionLines);
+            }
+        }
+
         await reply(lines.join("\n"));
     },
 };
 
 export const thinkCommand: Command = {
     name: "think",
-    async execute({ args, bridge, reply, daemon }) {
+    async execute({ args, bridge, reply, daemon, sessionName }) {
         if (!daemon) {
             await reply("❌ Daemon reference not available.");
             return;
         }
+        const name = sessionName ?? "main";
         const arg = args.toLowerCase().trim();
         if (arg === "on") {
             try {
                 await bridge.command("set_model_config", { thinking: true });
-                daemon.setThinkingEnabled(true);
-                await reply("🧠 Extended thinking **enabled**.");
+                daemon.setThinkingEnabled(name, true);
+                await reply(`🧠 Extended thinking **enabled** for session **${name}**.`);
             } catch (err) {
                 await reply(`❌ Failed to enable thinking: ${String(err)}`);
             }
         } else if (arg === "off") {
             try {
                 await bridge.command("set_model_config", { thinking: false });
-                daemon.setThinkingEnabled(false);
-                await reply("🧠 Extended thinking **disabled**.");
+                daemon.setThinkingEnabled(name, false);
+                await reply(`🧠 Extended thinking **disabled** for session **${name}**.`);
             } catch (err) {
                 await reply(`❌ Failed to disable thinking: ${String(err)}`);
             }
         } else {
-            const state = daemon.getThinkingEnabled() ? "on" : "off";
-            await reply(`🧠 Extended thinking is currently **${state}**.\nUsage: \`bot!think on|off\``);
+            const state = daemon.getThinkingEnabled(name) ? "on" : "off";
+            await reply(`🧠 Extended thinking is currently **${state}** for session **${name}**.\nUsage: \`bot!think on|off\``);
+        }
+    },
+};
+
+export const configCommand: Command = {
+    name: "config",
+    async execute({ args, reply, daemon }) {
+        const watcher = daemon?.getConfigWatcher?.();
+        if (!watcher) {
+            await reply("❌ Config watcher not available.");
+            return;
+        }
+
+        const config = watcher.getCurrentConfig();
+        const parts = args.trim().split(/\s+/).filter(Boolean);
+
+        // bot!config — show full config (redacted)
+        if (parts.length === 0) {
+            const redacted = redactConfig(config);
+            const yamlStr = yaml.dump(redacted, { lineWidth: -1, noRefs: true, sortKeys: true });
+            await reply(`📋 **Current config:**\n\`\`\`yaml\n${yamlStr}\`\`\``);
+            return;
+        }
+
+        const section = parts[0];
+        const configAny = config as Record<string, unknown>;
+
+        // bot!config <section> — show specific section
+        if (parts.length === 1) {
+            const sectionValue = configAny[section];
+            if (sectionValue === undefined) {
+                const available = Object.keys(configAny).join(", ");
+                await reply(`❌ Unknown section: \`${section}\`\nAvailable: ${available}`);
+                return;
+            }
+
+            // Redact the full config first, then extract the section
+            const redacted = redactConfig(config) as Record<string, unknown>;
+            const redactedSection = redacted[section];
+            const yamlStr = yaml.dump({ [section]: redactedSection }, { lineWidth: -1, noRefs: true });
+            await reply(`📋 **${section}:**\n\`\`\`yaml\n${yamlStr}\`\`\``);
+            return;
+        }
+
+        // bot!config <section> <key> <value> — update a value
+        if (parts.length >= 3) {
+            const key = parts[1];
+            const rawValue = parts.slice(2).join(" ");
+
+            const configPath = daemon?.getConfigPath?.();
+            if (!configPath) {
+                await reply("❌ Config path not available.");
+                return;
+            }
+
+            // Parse value: try JSON first (for booleans, numbers, arrays), fall back to string
+            let parsedValue: unknown;
+            try {
+                parsedValue = JSON.parse(rawValue);
+            } catch {
+                parsedValue = rawValue;
+            }
+
+            try {
+                // Build the update
+                const currentSection = configAny[section];
+                const updatedSection = currentSection && typeof currentSection === "object" && !Array.isArray(currentSection)
+                    ? { ...(currentSection as Record<string, unknown>), [key]: parsedValue }
+                    : { [key]: parsedValue };
+
+                const merged = { ...structuredClone(config), [section]: updatedSection } as Config;
+                const yamlStr = serializeConfig(merged);
+
+                // Atomic write: write to temp, validate, rename
+                const tmpPath = `${configPath}.tmp`;
+                writeFileSync(tmpPath, yamlStr, "utf-8");
+                try {
+                    loadConfig(tmpPath);
+                } catch (validationErr) {
+                    // Clean up temp file on validation failure
+                    try { renameSync(tmpPath, `${configPath}.failed`); } catch { /* ignore */ }
+                    throw new Error(`Config validation failed: ${String(validationErr)}`);
+                }
+                renameSync(tmpPath, configPath);
+
+                await reply(`✅ Updated \`${section}.${key}\` = \`${rawValue}\``);
+            } catch (err) {
+                await reply(`❌ Failed to update config: ${String(err)}`);
+            }
+            return;
+        }
+
+        // bot!config <section> <key> — show specific key
+        if (parts.length === 2) {
+            const key = parts[1];
+            const sectionValue = configAny[section];
+
+            if (!sectionValue || typeof sectionValue !== "object") {
+                await reply(`❌ Section \`${section}\` not found or is not an object.`);
+                return;
+            }
+
+            const redacted = redactConfig(config) as Record<string, unknown>;
+            const redactedSection = redacted[section] as Record<string, unknown> | undefined;
+            const value = redactedSection?.[key];
+
+            if (value === undefined) {
+                const available = Object.keys(sectionValue as Record<string, unknown>).join(", ");
+                await reply(`❌ Key \`${key}\` not found in \`${section}\`.\nAvailable: ${available}`);
+                return;
+            }
+
+            const display = typeof value === "object" ? JSON.stringify(value) : String(value);
+            await reply(`📋 \`${section}.${key}\` = \`${display}\``);
+            return;
         }
     },
 };
 
 // Register the new commands
-commands.push(rebootCommand, statusCommand, thinkCommand);
-for (const cmd of [rebootCommand, statusCommand, thinkCommand]) {
+commands.push(rebootCommand, statusCommand, thinkCommand, configCommand);
+for (const cmd of [rebootCommand, statusCommand, thinkCommand, configCommand]) {
     commandMap.set(cmd.name, cmd);
 }

@@ -366,6 +366,84 @@ describe("Webhook source in prompt prefix", () => {
     });
 });
 
+// ─── Webhook Session Validation (P8-T14) ──────────────────
+
+describe("Webhook session validation", () => {
+    let server: HttpServer;
+    let receivedReq: any;
+
+    beforeEach(async () => {
+        receivedReq = null;
+        const handler: WebhookHandler = async (req) => {
+            receivedReq = req;
+            return { ok: true, response: "ok" };
+        };
+        // Create server with a DashboardProvider that knows about sessions
+        const mockProvider = {
+            getUptime: () => 0,
+            getStartedAt: () => Date.now(),
+            getModel: () => "test",
+            getContextSize: () => 0,
+            getListenerCount: () => 0,
+            getCronJobs: () => [],
+            getUsage: () => ({ today: { inputTokens: 0, outputTokens: 0, cost: 0, messageCount: 0 }, week: { cost: 0 }, contextSize: 0 }),
+            getActivity: () => [],
+            getLogs: () => [],
+            getSessionNames: () => ["main", "work"],
+            getSessionState: () => null,
+            getUsageBySession: () => null,
+        };
+        server = new HttpServer(makeConfig(), mockProvider as any);
+        server.setWebhookHandler(handler);
+        await server.start();
+    });
+
+    afterEach(async () => {
+        await server.stop();
+    });
+
+    it("accepts webhook with valid session name", async () => {
+        const res = await fetch(`${baseUrl(server)}/api/webhook`, {
+            method: "POST",
+            headers: authHeaders(),
+            body: JSON.stringify({ message: "test", session: "main" }),
+        });
+        expect(res.status).toBe(200);
+        expect(receivedReq.session).toBe("main");
+    });
+
+    it("accepts webhook with another valid session", async () => {
+        const res = await fetch(`${baseUrl(server)}/api/webhook`, {
+            method: "POST",
+            headers: authHeaders(),
+            body: JSON.stringify({ message: "test", session: "work" }),
+        });
+        expect(res.status).toBe(200);
+        expect(receivedReq.session).toBe("work");
+    });
+
+    it("rejects webhook with unknown session name", async () => {
+        const res = await fetch(`${baseUrl(server)}/api/webhook`, {
+            method: "POST",
+            headers: authHeaders(),
+            body: JSON.stringify({ message: "test", session: "nonexistent" }),
+        });
+        expect(res.status).toBe(400);
+        expect(res.json().error).toContain("Unknown session");
+        expect(receivedReq).toBeNull(); // handler should not have been called
+    });
+
+    it("accepts webhook without session field (uses default)", async () => {
+        const res = await fetch(`${baseUrl(server)}/api/webhook`, {
+            method: "POST",
+            headers: authHeaders(),
+            body: JSON.stringify({ message: "test" }),
+        });
+        expect(res.status).toBe(200);
+        expect(receivedReq.session).toBeUndefined();
+    });
+});
+
 // ─── Handler not configured ───────────────────────────────────
 
 describe("Webhook without handler", () => {

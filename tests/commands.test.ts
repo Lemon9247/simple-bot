@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { Bridge } from "../src/bridge.js";
+import { SessionManager } from "../src/session-manager.js";
 import { Daemon } from "../src/daemon.js";
 import { Scheduler } from "../src/scheduler.js";
 import { createMockProcess, MockListener } from "./helpers.js";
@@ -19,6 +20,11 @@ function sendCommand(listener: MockListener, text: string) {
     });
 }
 
+/** Wrap a pre-built Bridge in a SessionManager for testing */
+function wrapBridge(config: Config, bridge: Bridge): SessionManager {
+    return new SessionManager(config, (_opts) => bridge);
+}
+
 /** SpawnFn that creates a fresh mock process each call (needed for restart tests). */
 function createRespawnableMockFn(responseText = "ok") {
     return () => createMockProcess(responseText).proc as any;
@@ -33,7 +39,7 @@ describe("bot!reboot", () => {
 
     it("stops and restarts the pi process", async () => {
         const bridge = new Bridge({ cwd: "/tmp", spawnFn: createRespawnableMockFn() });
-        daemon = new Daemon(baseConfig, bridge);
+        daemon = new Daemon(baseConfig, wrapBridge(baseConfig, bridge));
 
         const listener = new MockListener("discord");
         daemon.addListener(listener);
@@ -43,8 +49,9 @@ describe("bot!reboot", () => {
         await new Promise((r) => setTimeout(r, 100));
 
         expect(listener.sent).toHaveLength(2);
-        expect(listener.sent[0].text).toContain("Rebooting");
-        expect(listener.sent[1].text).toContain("Rebooted");
+        expect(listener.sent[0].text).toContain("Rebooting session");
+        expect(listener.sent[0].text).toContain("main");
+        expect(listener.sent[1].text).toContain("rebooted");
 
         // Bridge should still be running after reboot
         expect(bridge.running).toBe(true);
@@ -83,7 +90,7 @@ describe("bot!reboot", () => {
         });
 
         const bridge = new Bridge({ cwd: "/tmp", spawnFn: () => proc as any });
-        daemon = new Daemon(baseConfig, bridge);
+        daemon = new Daemon(baseConfig, wrapBridge(baseConfig, bridge));
 
         const listener = new MockListener("discord");
         daemon.addListener(listener);
@@ -112,7 +119,7 @@ describe("bot!reboot", () => {
 
     it("next message works after reboot", async () => {
         const bridge = new Bridge({ cwd: "/tmp", spawnFn: createRespawnableMockFn() });
-        daemon = new Daemon(baseConfig, bridge);
+        daemon = new Daemon(baseConfig, wrapBridge(baseConfig, bridge));
 
         const listener = new MockListener("discord");
         daemon.addListener(listener);
@@ -145,7 +152,7 @@ describe("bot!status", () => {
     it("shows uptime, model, and context info", async () => {
         const { spawnFn } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });
-        daemon = new Daemon(baseConfig, bridge);
+        daemon = new Daemon(baseConfig, wrapBridge(baseConfig, bridge));
 
         const listener = new MockListener("discord");
         daemon.addListener(listener);
@@ -174,7 +181,9 @@ describe("bot!status", () => {
         const cronConfig = { dir: "/tmp/cron-test-" + Date.now() };
         const scheduler = new Scheduler(cronConfig, bridge);
 
-        daemon = new Daemon(baseConfig, bridge, scheduler);
+        const sm = wrapBridge(baseConfig, bridge);
+        daemon = new Daemon(baseConfig, sm);
+        daemon.setScheduler(scheduler);
 
         const listener = new MockListener("discord");
         daemon.addListener(listener);
@@ -201,7 +210,7 @@ describe("bot!status", () => {
     it("shows usage stats when tracker has events", async () => {
         const { spawnFn } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });
-        daemon = new Daemon(baseConfig, bridge);
+        daemon = new Daemon(baseConfig, wrapBridge(baseConfig, bridge));
 
         const listener = new MockListener("discord");
         daemon.addListener(listener);
@@ -250,7 +259,7 @@ describe("bot!status", () => {
         });
 
         const bridge = new Bridge({ cwd: "/tmp", spawnFn: () => proc as any });
-        daemon = new Daemon(baseConfig, bridge);
+        daemon = new Daemon(baseConfig, wrapBridge(baseConfig, bridge));
 
         const listener = new MockListener("discord");
         daemon.addListener(listener);
@@ -278,7 +287,7 @@ describe("bot!think", () => {
     it("enables extended thinking", async () => {
         const { spawnFn } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });
-        daemon = new Daemon(baseConfig, bridge);
+        daemon = new Daemon(baseConfig, wrapBridge(baseConfig, bridge));
 
         const listener = new MockListener("discord");
         daemon.addListener(listener);
@@ -290,12 +299,13 @@ describe("bot!think", () => {
         expect(listener.sent).toHaveLength(1);
         expect(listener.sent[0].text).toContain("enabled");
         expect(listener.sent[0].text).toContain("🧠");
+        expect(listener.sent[0].text).toContain("main");
     });
 
     it("disables extended thinking", async () => {
         const { spawnFn } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });
-        daemon = new Daemon(baseConfig, bridge);
+        daemon = new Daemon(baseConfig, wrapBridge(baseConfig, bridge));
 
         const listener = new MockListener("discord");
         daemon.addListener(listener);
@@ -310,12 +320,13 @@ describe("bot!think", () => {
 
         expect(listener.sent).toHaveLength(2);
         expect(listener.sent[1].text).toContain("disabled");
+        expect(listener.sent[1].text).toContain("main");
     });
 
     it("shows current state with no argument", async () => {
         const { spawnFn } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });
-        daemon = new Daemon(baseConfig, bridge);
+        daemon = new Daemon(baseConfig, wrapBridge(baseConfig, bridge));
 
         const listener = new MockListener("discord");
         daemon.addListener(listener);
@@ -326,13 +337,14 @@ describe("bot!think", () => {
 
         expect(listener.sent).toHaveLength(1);
         expect(listener.sent[0].text).toContain("currently **off**");
+        expect(listener.sent[0].text).toContain("main");
         expect(listener.sent[0].text).toContain("bot!think on|off");
     });
 
     it("tracks thinking state across calls", async () => {
         const { spawnFn } = createMockProcess("ok");
         const bridge = new Bridge({ cwd: "/tmp", spawnFn });
-        daemon = new Daemon(baseConfig, bridge);
+        daemon = new Daemon(baseConfig, wrapBridge(baseConfig, bridge));
 
         const listener = new MockListener("discord");
         daemon.addListener(listener);
@@ -371,7 +383,7 @@ describe("bot!think", () => {
         });
 
         const bridge = new Bridge({ cwd: "/tmp", spawnFn: () => proc as any });
-        daemon = new Daemon(baseConfig, bridge);
+        daemon = new Daemon(baseConfig, wrapBridge(baseConfig, bridge));
 
         const listener = new MockListener("discord");
         daemon.addListener(listener);
@@ -383,5 +395,278 @@ describe("bot!think", () => {
         expect(listener.sent).toHaveLength(1);
         expect(listener.sent[0].text).toContain("❌");
         expect(listener.sent[0].text).toContain("Failed to enable thinking");
+    });
+});
+
+// ─── Session-aware command tests (T8-T10) ─────────────────────
+
+/** Config with multiple sessions and routing rules */
+const multiSessionConfig: Config = {
+    pi: { cwd: "/tmp" },
+    security: { allowed_users: ["@willow:athena"] },
+    sessions: {
+        main: { pi: { cwd: "/tmp/main" } },
+        work: { pi: { cwd: "/tmp/work" } },
+    },
+    routing: {
+        rules: [
+            { match: { platform: "discord", channel: "456" }, session: "work" },
+        ],
+        default: "main",
+    },
+};
+
+describe("bot!reboot (session-aware)", () => {
+    let daemon: Daemon;
+
+    afterEach(async () => {
+        await daemon?.stop();
+    });
+
+    it("reboots a named session with bot!reboot <name>", async () => {
+        const sm = new SessionManager(multiSessionConfig, () => {
+            const bridge = new Bridge({ cwd: "/tmp", spawnFn: createRespawnableMockFn() });
+            return bridge;
+        });
+        daemon = new Daemon(multiSessionConfig, sm);
+
+        const listener = new MockListener("discord");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        // Start the work session first by sending a message to it
+        await sm.getOrStartSession("work");
+
+        sendCommand(listener, "bot!reboot work");
+        await new Promise((r) => setTimeout(r, 150));
+
+        const msgs = listener.sent.map((s) => s.text);
+        expect(msgs.some((m) => m.includes("Rebooting session") && m.includes("work"))).toBe(true);
+        expect(msgs.some((m) => m.includes("work") && m.includes("rebooted"))).toBe(true);
+    });
+
+    it("reboots all sessions with bot!reboot all", async () => {
+        const sm = new SessionManager(multiSessionConfig, () => {
+            return new Bridge({ cwd: "/tmp", spawnFn: createRespawnableMockFn() });
+        });
+        daemon = new Daemon(multiSessionConfig, sm);
+
+        const listener = new MockListener("discord");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        // Start both sessions
+        await sm.getOrStartSession("main");
+        await sm.getOrStartSession("work");
+
+        sendCommand(listener, "bot!reboot all");
+        await new Promise((r) => setTimeout(r, 200));
+
+        const msgs = listener.sent.map((s) => s.text);
+        expect(msgs.some((m) => m.includes("Rebooting 2 session(s)"))).toBe(true);
+        // Should have results for both sessions
+        const resultMsg = msgs.find((m) => m.includes("main") && m.includes("work"));
+        expect(resultMsg).toBeDefined();
+    });
+
+    it("reports error for unknown session name", async () => {
+        const sm = new SessionManager(multiSessionConfig, () => {
+            return new Bridge({ cwd: "/tmp", spawnFn: createRespawnableMockFn() });
+        });
+        daemon = new Daemon(multiSessionConfig, sm);
+
+        const listener = new MockListener("discord");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        sendCommand(listener, "bot!reboot nonexistent");
+        await new Promise((r) => setTimeout(r, 50));
+
+        expect(listener.sent).toHaveLength(1);
+        expect(listener.sent[0].text).toContain("Unknown session");
+        expect(listener.sent[0].text).toContain("nonexistent");
+    });
+
+    it("reboots only running sessions with bot!reboot all", async () => {
+        const sm = new SessionManager(multiSessionConfig, () => {
+            return new Bridge({ cwd: "/tmp", spawnFn: createRespawnableMockFn() });
+        });
+        daemon = new Daemon(multiSessionConfig, sm);
+
+        const listener = new MockListener("discord");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        // The daemon lazily starts "main" for the command bridge.
+        // "work" is not started, so only "main" should be rebooted.
+        sendCommand(listener, "bot!reboot all");
+        await new Promise((r) => setTimeout(r, 200));
+
+        const msgs = listener.sent.map((s) => s.text);
+        expect(msgs.some((m) => m.includes("Rebooting 1 session(s)"))).toBe(true);
+        expect(msgs.some((m) => m.includes("main"))).toBe(true);
+    });
+
+    it("bot!reboot ALL is case-insensitive", async () => {
+        const sm = new SessionManager(multiSessionConfig, () => {
+            return new Bridge({ cwd: "/tmp", spawnFn: createRespawnableMockFn() });
+        });
+        daemon = new Daemon(multiSessionConfig, sm);
+
+        const listener = new MockListener("discord");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        await sm.getOrStartSession("main");
+
+        sendCommand(listener, "bot!reboot ALL");
+        await new Promise((r) => setTimeout(r, 200));
+
+        const msgs = listener.sent.map((s) => s.text);
+        expect(msgs.some((m) => m.includes("Rebooting"))).toBe(true);
+    });
+
+    it("bot!reboot matches session names case-insensitively", async () => {
+        const sm = new SessionManager(multiSessionConfig, () => {
+            return new Bridge({ cwd: "/tmp", spawnFn: createRespawnableMockFn() });
+        });
+        daemon = new Daemon(multiSessionConfig, sm);
+
+        const listener = new MockListener("discord");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        await sm.getOrStartSession("work");
+
+        sendCommand(listener, "bot!reboot Work");
+        await new Promise((r) => setTimeout(r, 150));
+
+        const msgs = listener.sent.map((s) => s.text);
+        expect(msgs.some((m) => m.includes("Rebooting session") && m.includes("work"))).toBe(true);
+    });
+});
+
+describe("bot!status (session-aware)", () => {
+    let daemon: Daemon;
+
+    afterEach(async () => {
+        await daemon?.stop();
+    });
+
+    it("shows session list when multiple sessions configured", async () => {
+        const sm = new SessionManager(multiSessionConfig, () => {
+            return new Bridge({ cwd: "/tmp", spawnFn: createRespawnableMockFn() });
+        });
+        daemon = new Daemon(multiSessionConfig, sm);
+
+        const listener = new MockListener("discord");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        // Start main session
+        await sm.getOrStartSession("main");
+
+        sendCommand(listener, "bot!status");
+        await new Promise((r) => setTimeout(r, 100));
+
+        expect(listener.sent).toHaveLength(1);
+        const status = listener.sent[0].text;
+
+        // Should show session section header
+        expect(status).toContain("Sessions (2)");
+        // Should show running indicator for main
+        expect(status).toContain("🟢");
+        expect(status).toContain("main");
+        // Should show idle indicator for work
+        expect(status).toContain("⚪");
+        expect(status).toContain("work");
+    });
+
+    it("marks current channel's session", async () => {
+        const sm = new SessionManager(multiSessionConfig, () => {
+            return new Bridge({ cwd: "/tmp", spawnFn: createRespawnableMockFn() });
+        });
+        daemon = new Daemon(multiSessionConfig, sm);
+
+        const listener = new MockListener("discord");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        sendCommand(listener, "bot!status");
+        await new Promise((r) => setTimeout(r, 100));
+
+        const status = listener.sent[0].text;
+        // Channel 123 routes to "main" (default)
+        expect(status).toContain("this channel");
+    });
+
+    it("does not show session list for single session config", async () => {
+        const { spawnFn } = createMockProcess("ok");
+        const bridge = new Bridge({ cwd: "/tmp", spawnFn });
+        daemon = new Daemon(baseConfig, wrapBridge(baseConfig, bridge));
+
+        const listener = new MockListener("discord");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        sendCommand(listener, "bot!status");
+        await new Promise((r) => setTimeout(r, 50));
+
+        const status = listener.sent[0].text;
+        // Single session — no session list
+        expect(status).not.toContain("Sessions");
+    });
+});
+
+describe("bot!think (per-session)", () => {
+    let daemon: Daemon;
+
+    afterEach(async () => {
+        await daemon?.stop();
+    });
+
+    it("thinking state is isolated per session", async () => {
+        const sm = new SessionManager(multiSessionConfig, () => {
+            return new Bridge({ cwd: "/tmp", spawnFn: createRespawnableMockFn() });
+        });
+        daemon = new Daemon(multiSessionConfig, sm);
+
+        const listener = new MockListener("discord");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        // Enable thinking on main (channel 123 → main)
+        sendCommand(listener, "bot!think on");
+        await new Promise((r) => setTimeout(r, 50));
+
+        expect(listener.sent[0].text).toContain("enabled");
+        expect(listener.sent[0].text).toContain("main");
+
+        // Check thinking on main
+        expect(daemon.getThinkingEnabled("main")).toBe(true);
+        // Work session should be unaffected
+        expect(daemon.getThinkingEnabled("work")).toBe(false);
+    });
+
+    it("shows per-session thinking state in status", async () => {
+        const sm = new SessionManager(multiSessionConfig, () => {
+            return new Bridge({ cwd: "/tmp", spawnFn: createRespawnableMockFn() });
+        });
+        daemon = new Daemon(multiSessionConfig, sm);
+
+        const listener = new MockListener("discord");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        // Enable thinking on main
+        sendCommand(listener, "bot!think on");
+        await new Promise((r) => setTimeout(r, 50));
+
+        // Check state
+        sendCommand(listener, "bot!think");
+        await new Promise((r) => setTimeout(r, 50));
+
+        expect(listener.sent[1].text).toContain("currently **on**");
+        expect(listener.sent[1].text).toContain("main");
     });
 });

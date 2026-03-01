@@ -95,6 +95,7 @@ export class Tracker {
         inputTokens: number;
         outputTokens: number;
         contextSize: number;
+        sessionName?: string;
     }): UsageEvent {
         const compaction = this.detectCompaction(data.contextSize);
         const cost = this.estimateCost(data.model, data.inputTokens, data.outputTokens);
@@ -107,6 +108,7 @@ export class Tracker {
             contextSize: data.contextSize,
             cost,
             compaction,
+            ...(data.sessionName ? { sessionName: data.sessionName } : {}),
         };
 
         this.insertEvent(event);
@@ -123,6 +125,12 @@ export class Tracker {
     today(): UsageSummary {
         const startOfDay = this.startOfDayUTC();
         return this.aggregate((e) => e.timestamp >= startOfDay);
+    }
+
+    /** Aggregated usage for today filtered by session name. */
+    todayBySession(sessionName: string): UsageSummary {
+        const startOfDay = this.startOfDayUTC();
+        return this.aggregate((e) => e.timestamp >= startOfDay && e.sessionName === sessionName);
     }
 
     /** Aggregated usage for last 7 days. */

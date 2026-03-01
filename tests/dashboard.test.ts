@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { request } from "node:http";
-import { HttpServer, type DashboardProvider } from "../src/server.js";
+import { HttpServer, type DashboardProvider, type SessionStateInfo } from "../src/server.js";
 import type { ServerConfig, ActivityEntry } from "../src/types.js";
 
 const TEST_TOKEN = "test-secret-token";
@@ -93,6 +93,15 @@ function makeMockProvider(overrides: Partial<DashboardProvider> = {}): Dashboard
             { timestamp: "2026-02-27T12:00:00.000Z", level: "info", message: "Bot started" },
             { timestamp: "2026-02-27T12:01:00.000Z", level: "warn", message: "Rate limit hit", sender: "alice" },
         ],
+        getSessionNames: () => ["main"],
+        getSessionState: (name: string): SessionStateInfo | null => {
+            if (name === "main") return { name: "main", state: "running", lastActivity: Date.now() };
+            return null;
+        },
+        getUsageBySession: (name: string) => {
+            if (name === "main") return { today: { inputTokens: 15000, outputTokens: 5000, cost: 0.12, messageCount: 8 } };
+            return null;
+        },
         ...overrides,
     };
 }
@@ -509,6 +518,129 @@ describe("Dashboard HTTP integration", () => {
             level: expect.any(String),
             message: expect.any(String),
         });
+    });
+});
+
+// ─── Sessions API (P8-T13) ────────────────────────────────────
+
+describe("Dashboard API: /api/sessions", () => {
+    let server: HttpServer;
+
+    beforeEach(async () => {
+        server = new HttpServer(makeConfig(), makeMockProvider({
+            getSessionNames: () => ["main", "work"],
+            getSessionState: (name: string): SessionStateInfo | null => {
+                if (name === "main") return { name: "main", state: "running", lastActivity: Date.now() - 5000 };
+                if (name === "work") return { name: "work", state: "idle", lastActivity: Date.now() - 60000 };
+                return null;
+            },
+            getUsageBySession: (name: string) => {
+                if (name === "main") return { today: { inputTokens: 10000, outputTokens: 3000, cost: 0.08, messageCount: 5 } };
+                if (name === "work") return { today: { inputTokens: 2000, outputTokens: 500, cost: 0.01, messageCount: 2 } };
+                return null;
+            },
+        }));
+        await server.start();
+    });
+
+    afterEach(async () => {
+        await server.stop();
+    });
+
+    it("returns list of sessions with state and usage", async () => {
+        const { status, body } = await fetchJson(`${baseUrl(server)}/api/sessions`, {
+            headers: authHeader(),
+        });
+        expect(status).toBe(200);
+        expect(body.sessions).toHaveLength(2);
+
+        const main = body.sessions.find((s: any) => s.name === "main");
+        expect(main.state).toBe("running");
+        expect(main.today.inputTokens).toBe(10000);
+        expect(main.today.cost).toBe(0.08);
+
+        const work = body.sessions.find((s: any) => s.name === "work");
+        expect(work.state).toBe("idle");
+        expect(work.today.inputTokens).toBe(2000);
+    });
+
+    it("requires auth", async () => {
+        const { status } = await fetchJson(`${baseUrl(server)}/api/sessions`);
+        expect(status).toBe(401);
+    });
+
+    it("returns empty sessions without provider", async () => {
+        const noProviderServer = new HttpServer(makeConfig());
+        await noProviderServer.start();
+        const { body } = await fetchJson(`${baseUrl(noProviderServer)}/api/sessions`, {
+            headers: authHeader(),
+        });
+        expect(body.sessions).toEqual([]);
+        await noProviderServer.stop();
+    });
+});
+
+describe("Dashboard API: /api/status includes sessions", () => {
+    it("includes sessions list in status response", async () => {
+        const server = new HttpServer(makeConfig(), makeMockProvider({
+            getSessionNames: () => ["main", "work"],
+        }));
+        await server.start();
+
+        const { status, body } = await fetchJson(`${baseUrl(server)}/api/status`, {
+            headers: authHeader(),
+        });
+        expect(status).toBe(200);
+        expect(body.sessions).toEqual(["main", "work"]);
+
+        await server.stop();
+    });
+});
+
+describe("Dashboard API: /api/usage with session filter", () => {
+    let server: HttpServer;
+
+    beforeEach(async () => {
+        server = new HttpServer(makeConfig(), makeMockProvider({
+            getSessionNames: () => ["main", "work"],
+            getUsageBySession: (name: string) => {
+                if (name === "main") return { today: { inputTokens: 8000, outputTokens: 2000, cost: 0.06, messageCount: 4 } };
+                if (name === "work") return { today: { inputTokens: 1000, outputTokens: 300, cost: 0.005, messageCount: 1 } };
+                return null;
+            },
+        }));
+        await server.start();
+    });
+
+    afterEach(async () => {
+        await server.stop();
+    });
+
+    it("returns per-session usage with ?session= param", async () => {
+        const { status, body } = await fetchJson(`${baseUrl(server)}/api/usage?session=main`, {
+            headers: authHeader(),
+        });
+        expect(status).toBe(200);
+        expect(body.session).toBe("main");
+        expect(body.today.inputTokens).toBe(8000);
+        expect(body.today.cost).toBe(0.06);
+    });
+
+    it("returns 404 for unknown session", async () => {
+        const { status, body } = await fetchJson(`${baseUrl(server)}/api/usage?session=nonexistent`, {
+            headers: authHeader(),
+        });
+        expect(status).toBe(404);
+        expect(body.error).toContain("Unknown session");
+    });
+
+    it("returns global usage without session param", async () => {
+        const { status, body } = await fetchJson(`${baseUrl(server)}/api/usage`, {
+            headers: authHeader(),
+        });
+        expect(status).toBe(200);
+        expect(body.today.inputTokens).toBe(15000); // from default mock
+        expect(body.week).toBeDefined();
     });
 });
 

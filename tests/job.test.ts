@@ -270,4 +270,77 @@ steps:
 ---`;
         expect(() => parseJobContent(content, "test.md")).toThrow("gracePeriodMs must be a non-negative number");
     });
+
+    it("parses session from frontmatter", () => {
+        const content = `---
+schedule: "0 7 * * *"
+session: work
+steps:
+  - compact
+---`;
+        const job = parseJobContent(content, "/cron.d/test.md");
+        expect(job.session).toBe("work");
+    });
+
+    it("defaults session to undefined when omitted", () => {
+        const content = `---
+schedule: "0 7 * * *"
+steps:
+  - compact
+---`;
+        const job = parseJobContent(content, "/cron.d/test.md");
+        expect(job.session).toBeUndefined();
+    });
+
+    it("rejects non-string session value", () => {
+        const content = `---
+schedule: "0 7 * * *"
+session: 123
+steps:
+  - compact
+---`;
+        expect(() => parseJobContent(content, "test.md")).toThrow("session must be a non-empty string");
+    });
+
+    it("rejects empty session string", () => {
+        const content = `---
+schedule: "0 7 * * *"
+session: ""
+steps:
+  - compact
+---`;
+        expect(() => parseJobContent(content, "test.md")).toThrow("session must be a non-empty string");
+    });
+
+    it("trims whitespace from session name", () => {
+        const content = `---
+schedule: "0 7 * * *"
+session: "  work  "
+steps:
+  - compact
+---`;
+        const job = parseJobContent(content, "/cron.d/test.md");
+        expect(job.session).toBe("work");
+    });
+
+    it("rejects session names with invalid characters", () => {
+        const content = `---
+schedule: "0 7 * * *"
+session: "bad session!"
+steps:
+  - compact
+---`;
+        expect(() => parseJobContent(content, "test.md")).toThrow("letters, numbers, hyphens, and underscores");
+    });
+
+    it("accepts session names with hyphens and underscores", () => {
+        const content = `---
+schedule: "0 7 * * *"
+session: "my_session-1"
+steps:
+  - compact
+---`;
+        const job = parseJobContent(content, "test.md");
+        expect(job.session).toBe("my_session-1");
+    });
 });

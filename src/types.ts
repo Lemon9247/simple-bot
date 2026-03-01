@@ -55,6 +55,35 @@ export interface ServerConfig {
     publicDir?: string;
 }
 
+// ─── Session & Routing Types ──────────────────────────────────
+
+export type SessionState = "idle" | "starting" | "running" | "stopping";
+
+export interface SessionConfig {
+    pi: {
+        cwd: string;
+        command?: string;
+        args?: string[];
+        extensions?: string[];
+    };
+    idleTimeoutMinutes?: number;
+}
+
+export interface RoutingRule {
+    match: {
+        platform?: string;
+        channel?: string;
+    };
+    session: string;
+}
+
+export interface RoutingConfig {
+    rules: RoutingRule[];
+    default: string;
+}
+
+// ─── Main Config ──────────────────────────────────────────────
+
 export interface Config {
     pi: {
         cwd: string;
@@ -77,6 +106,9 @@ export interface Config {
     cron?: CronConfig;
     server?: ServerConfig;
     tracking?: TrackingConfig;
+    sessions?: Record<string, SessionConfig>;
+    defaultSession?: string;
+    routing?: RoutingConfig;
 }
 
 export interface CronConfig {
@@ -100,6 +132,7 @@ export interface UsageEvent {
     contextSize: number;
     cost: number;
     compaction: boolean;
+    sessionName?: string;
 }
 
 // ─── Webhook Types ────────────────────────────────────────────
@@ -144,5 +177,35 @@ export interface JobDefinition {
     notify: string | "none" | null;  // null = inherit default
     enabled: boolean;
     gracePeriodMs?: number;  // per-job override; undefined = use global default
+    session?: string;  // target session name; undefined = use default session
     body: string;
 }
+
+// ─── Config Reload Types ──────────────────────────────────────
+
+/** Describes a single config field that changed */
+export interface ConfigChange {
+    section: string;
+    key: string;
+    oldValue: unknown;
+    newValue: unknown;
+    hotReloadable: boolean;
+}
+
+/** Result of diffing two configs */
+export interface ConfigDiff {
+    changes: ConfigChange[];
+    hasRestartRequired: boolean;
+    hasHotReloadable: boolean;
+}
+
+/** Config with sensitive fields redacted */
+export type ConfigRedacted = {
+    [K in keyof Config]: K extends "discord"
+        ? { token: string } | undefined
+        : K extends "matrix"
+          ? { homeserver: string; user: string; token: string; storage_path?: string } | undefined
+          : K extends "server"
+            ? { port: number; token: string; publicDir?: string } | undefined
+            : Config[K];
+};

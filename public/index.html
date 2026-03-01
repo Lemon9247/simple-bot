@@ -280,6 +280,31 @@
             text-align: center;
         }
 
+        /* Session panel */
+        .session-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.4rem 0.5rem;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.85rem;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+
+        .session-item:last-child { border-bottom: none; }
+        .session-item:hover { background: rgba(255,255,255,0.03); }
+        .session-item.active { background: rgba(88, 166, 255, 0.1); border-left: 2px solid var(--accent); }
+
+        .session-name { font-weight: 500; }
+        .session-state { font-size: 0.75rem; }
+        .session-state.running { color: var(--green); }
+        .session-state.idle { color: var(--text-dim); }
+        .session-state.starting { color: var(--yellow); }
+        .session-state.stopping { color: var(--orange); }
+        .session-cost { margin-left: auto; font-size: 0.75rem; color: var(--green); font-variant-numeric: tabular-nums; }
+        .session-activity { font-size: 0.7rem; color: var(--text-dim); }
+
         /* Scrollbar */
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
@@ -298,6 +323,14 @@
     </header>
 
     <div class="grid" id="dashboard" style="display:none;">
+        <!-- Sessions Panel (P8-T13) -->
+        <div class="panel" id="sessions-panel">
+            <h2>Sessions</h2>
+            <div id="sessions-content">
+                <div class="empty-state">No sessions</div>
+            </div>
+        </div>
+
         <!-- Status Panel (P5-T4) -->
         <div class="panel" id="status-panel">
             <h2>Status</h2>
@@ -464,13 +497,15 @@
 
                 // Immediate fetch all
                 refreshStatus();
+                refreshSessions();
                 refreshCron();
                 refreshUsage();
                 refreshActivity();
                 refreshLogs();
 
-                // Fast: activity
+                // Fast: activity + sessions
                 timers.push(setInterval(refreshActivity, REFRESH_FAST));
+                timers.push(setInterval(refreshSessions, REFRESH_FAST));
 
                 // Slow: everything else
                 timers.push(setInterval(refreshStatus, REFRESH_SLOW));
@@ -487,6 +522,21 @@
                     $('st-model').textContent = d.model || '—';
                     $('st-listeners').textContent = d.listenerCount ?? '—';
 
+                    // Show session count if multiple sessions
+                    const sessionCount = d.sessions ? d.sessions.length : 0;
+                    if (sessionCount > 1) {
+                        // Update status panel to show session count
+                        let sessionRow = document.getElementById('st-sessions-row');
+                        if (!sessionRow) {
+                            sessionRow = document.createElement('div');
+                            sessionRow.id = 'st-sessions-row';
+                            sessionRow.className = 'stat-row';
+                            sessionRow.innerHTML = '<span class="stat-label">Sessions</span><span class="stat-value" id="st-sessions">—</span>';
+                            $('status-panel').querySelector('.context-gauge').before(sessionRow);
+                        }
+                        $('st-sessions').textContent = sessionCount + '';
+                    }
+
                     const ctx = d.contextSize || 0;
                     const pct = Math.min(100, Math.round((ctx / CONTEXT_WINDOW) * 100));
                     $('st-ctx-pct').textContent = pct + '%';
@@ -494,6 +544,34 @@
                     $('ctx-bar').style.background = gaugeColor(pct);
                     $('ctx-used').textContent = formatTokens(ctx);
                     $('ctx-max').textContent = formatTokens(CONTEXT_WINDOW);
+                } catch { /* ignore */ }
+            }
+
+            // ─── Sessions Panel (P8-T13) ─────────────────────
+            async function refreshSessions() {
+                try {
+                    const d = await apiFetch('/api/sessions');
+                    const sessions = d.sessions || [];
+                    if (sessions.length <= 1) {
+                        // Single session — hide the panel
+                        $('sessions-panel').style.display = 'none';
+                        return;
+                    }
+                    $('sessions-panel').style.display = '';
+                    let html = '';
+                    const validStates = ['running', 'idle', 'starting', 'stopping', 'error'];
+                    for (const s of sessions) {
+                        const stateClass = validStates.includes(s.state) ? s.state : 'unknown';
+                        const costStr = s.today && s.today.cost > 0 ? '$' + s.today.cost.toFixed(4) : '';
+                        const actStr = s.lastActivity ? timeAgo(s.lastActivity) : '';
+                        html += '<div class="session-item">'
+                            + '<span class="session-name">' + esc(s.name) + '</span>'
+                            + '<span class="session-state ' + stateClass + '">' + esc(s.state) + '</span>'
+                            + (actStr ? '<span class="session-activity">' + actStr + '</span>' : '')
+                            + (costStr ? '<span class="session-cost">' + costStr + '</span>' : '')
+                            + '</div>';
+                    }
+                    $('sessions-content').innerHTML = html;
                 } catch { /* ignore */ }
             }
 
