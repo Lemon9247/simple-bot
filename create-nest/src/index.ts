@@ -41,7 +41,11 @@ function parseArgs(argv: string[]): Flags {
             flags.docker = true;
         } else if (arg === "--no-docker") {
             flags.docker = false;
-        } else if (arg === "--domain" && i + 1 < args.length) {
+        } else if (arg === "--domain") {
+            if (i + 1 >= args.length || args[i + 1].startsWith("--")) {
+                console.error("Error: --domain requires a value");
+                process.exit(1);
+            }
             flags.domain = args[++i];
         } else if (arg === "--discord") {
             flags.discord = true;
@@ -229,10 +233,14 @@ async function collectConfig(flags: Flags): Promise<Config> {
 
 // ── Template processing ────────────────────────────────────
 
+function sanitizeValue(value: string): string {
+    return value.replace(/[{}]/g, "");
+}
+
 function fillTemplate(template: string, vars: Record<string, string>): string {
     let result = template;
     for (const [key, value] of Object.entries(vars)) {
-        result = result.replaceAll(`{{${key}}}`, value);
+        result = result.replaceAll(`{{${key}}}`, sanitizeValue(value));
     }
     return result;
 }
@@ -274,8 +282,8 @@ function scaffold(config: Config): void {
         API_KEY: config.apiKey,
         SERVER_TOKEN: config.serverToken,
         DOMAIN: config.domain,
-        PI_CWD: isDocker ? "/home/agent" : path.resolve(projectDir, "vault"),
-        VAULT_PATH: isDocker ? "/vault" : "./vault",
+        PI_CWD: isDocker ? "/home/agent" : path.resolve(projectDir),
+        VAULT_PATH: isDocker ? "/home/agent/vault" : "./vault",
         ALLOWED_USER: config.allowedUser,
     };
 
@@ -337,19 +345,43 @@ function scaffold(config: Config): void {
 
         // If domain provided, uncomment the Caddy sidecar
         if (hasDomain) {
-            composeTemplate = composeTemplate
-                // Remove comment markers from Caddy service
-                .replace(
-                    /    # caddy:\n    #     image/,
-                    "    caddy:\n        image",
-                )
-                .replace(
-                    /    #     restart: unless-stopped\n    #     ports:\n    #         - "80:80"\n    #         - "443:443"\n    #     volumes:\n    #         - .\/Caddyfile:\/etc\/caddy\/Caddyfile:ro\n    #         - caddy-data:\/data\n    #         - caddy-config:\/config\n    #     networks:\n    #         - isolated/,
-                    '        restart: unless-stopped\n        ports:\n            - "80:80"\n            - "443:443"\n        volumes:\n            - ./Caddyfile:/etc/caddy/Caddyfile:ro\n            - caddy-data:/data\n            - caddy-config:/config\n        networks:\n            - isolated',
-                )
-                // Uncomment caddy volumes
-                .replace("    # caddy-data:", "    caddy-data:")
-                .replace("    # caddy-config:", "    caddy-config:");
+            // Line-by-line uncomment: strip "# " prefix from lines
+            // inside the caddy service block and caddy volume entries
+            const lines = composeTemplate.split("\n");
+            const result: string[] = [];
+            let inCaddyBlock = false;
+
+            for (const line of lines) {
+                // Detect start of caddy block
+                if (/^\s*# caddy:/.test(line)) {
+                    inCaddyBlock = true;
+                    result.push(line.replace(/^(\s*)# /, "$1"));
+                    continue;
+                }
+
+                // Inside caddy block: strip comment prefix
+                if (inCaddyBlock) {
+                    if (/^\s*#\s{4}/.test(line) || /^\s*#\s*$/.test(line)) {
+                        // Indented commented line — strip "# " prefix
+                        result.push(line.replace(/^(\s*)# /, "$1"));
+                    } else {
+                        // Non-indented, non-comment line — block ended
+                        inCaddyBlock = false;
+                        result.push(line);
+                    }
+                    continue;
+                }
+
+                // Uncomment caddy volume entries
+                if (/^\s*# caddy-(data|config):/.test(line)) {
+                    result.push(line.replace(/^(\s*)# /, "$1"));
+                    continue;
+                }
+
+                result.push(line);
+            }
+
+            composeTemplate = result.join("\n");
         }
 
         fs.writeFileSync(

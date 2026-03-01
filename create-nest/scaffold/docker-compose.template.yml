@@ -13,8 +13,10 @@ services:
             - isolated
         volumes:
             - ./config.yaml:/config/config.yaml:ro
-            - ./vault:/vault
+            - ./vault:/home/agent/vault
             - nix-store:/nix              # Persistent Nix store (optional)
+        environment:
+            - HOME=/home/agent
         env_file:
             - .env
 
