@@ -151,38 +151,36 @@ export class Scheduler extends EventEmitter {
             }
         }
 
-        // Check executing mutex synchronously before any async work
+        // Lock mutex BEFORE any async work to prevent race condition
         if (this.executing) {
             logger.info("Skipping cron job, busy", { name: job.name });
             return;
         }
-
-        // Resolve the bridge for this job's session.
-        // Avoid await when resolveJobBridge returns synchronously (no session manager)
-        // to preserve existing synchronous execution semantics for single-bridge mode.
-        let bridge: Bridge;
-        try {
-            const result = this.resolveJobBridge(job);
-            bridge = result instanceof Promise ? await result : result;
-        } catch (err) {
-            logger.error("Failed to resolve session for cron job", {
-                name: job.name,
-                session: job.session,
-                error: String(err),
-            });
-            return;
-        }
-
-        if (bridge.busy || this.executing) {
-            logger.info("Skipping cron job, busy", { name: job.name });
-            return;
-        }
-
         this.executing = true;
-        const execution = this.runSteps(job, bridge);
-        this.activeExecution = execution;
 
         try {
+            // Resolve the bridge for this job's session.
+            let bridge: Bridge;
+            try {
+                const result = this.resolveJobBridge(job);
+                bridge = result instanceof Promise ? await result : result;
+            } catch (err) {
+                logger.error("Failed to resolve session for cron job", {
+                    name: job.name,
+                    session: job.session,
+                    error: String(err),
+                });
+                this.emit("job-error", { job: job.name, session: job.session, error: String(err) });
+                return;
+            }
+
+            if (bridge.busy) {
+                logger.info("Skipping cron job, bridge busy", { name: job.name });
+                return;
+            }
+
+            const execution = this.runSteps(job, bridge);
+            this.activeExecution = execution;
             await execution;
         } finally {
             this.executing = false;
