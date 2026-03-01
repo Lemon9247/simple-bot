@@ -1,0 +1,18 @@
+pi:
+    cwd: {{PI_CWD}}
+
+security:
+    allowed_users:
+        - "{{ALLOWED_USER}}"
+
+server:
+    port: 8484
+    token: "env:SERVER_TOKEN"
+    publicDir: /app/public
+
+vault:
+    path: {{VAULT_PATH}}
+
+# Uncomment to enable Discord:
+# discord:
+#     token: "env:DISCORD_TOKEN"
