@@ -28,3 +28,6 @@ security:
 #     port: 8484
 #     token: "env:SERVER_TOKEN"         # Required — Bearer token for API auth
 #     publicDir: /app/public            # Optional — defaults to ./public
+
+# vault:
+#     path: /path/to/vault             # Root directory for vault file operations
