@@ -1,9 +1,9 @@
-import { writeFileSync } from "node:fs";
+import { writeFileSync, copyFileSync, renameSync } from "node:fs";
 import yaml from "js-yaml";
 import type { Bridge } from "./bridge.js";
 import type { ConfigWatcher } from "./config-watcher.js";
 import type { SessionManager } from "./session-manager.js";
-import { redactConfig, serializeConfig } from "./config.js";
+import { redactConfig, serializeConfig, loadConfig } from "./config.js";
 import type { Config } from "./types.js";
 
 export interface DaemonRef {
@@ -134,7 +134,7 @@ export const rebootCommand: Command = {
     name: "reboot",
     interrupts: true,
     async execute({ args, bridge, reply, sessionName, sessionManager }) {
-        const target = args.trim().toLowerCase();
+        const target = args.trim();
 
         if (!target) {
             // bot!reboot — reboot the resolved session for this channel
@@ -153,7 +153,7 @@ export const rebootCommand: Command = {
             return;
         }
 
-        if (target === "all") {
+        if (target.toLowerCase() === "all") {
             // bot!reboot all — reboot all sessions
             const names = sessionManager.getSessionNames();
             const running = names.filter((n) => sessionManager.getSession(n) !== null);
@@ -178,17 +178,19 @@ export const rebootCommand: Command = {
 
         // bot!reboot <name> — reboot a specific session
         const names = sessionManager.getSessionNames();
-        if (!names.includes(target)) {
+        const targetLower = target.toLowerCase();
+        const matchedName = names.find((n) => n.toLowerCase() === targetLower);
+        if (!matchedName) {
             await reply(`❌ Unknown session: \`${target}\`. Available: ${names.join(", ")}`);
             return;
         }
-        await reply(`🔄 Rebooting session **${target}**...`);
+        await reply(`🔄 Rebooting session **${matchedName}**...`);
         try {
-            await sessionManager.stopSession(target);
-            await sessionManager.getOrStartSession(target);
-            await reply(`✅ Session **${target}** rebooted.`);
+            await sessionManager.stopSession(matchedName);
+            await sessionManager.getOrStartSession(matchedName);
+            await reply(`✅ Session **${matchedName}** rebooted.`);
         } catch (err) {
-            await reply(`❌ Failed to reboot session **${target}**: ${String(err)}`);
+            await reply(`❌ Failed to reboot session **${matchedName}**: ${String(err)}`);
         }
     },
 };
@@ -373,7 +375,18 @@ export const configCommand: Command = {
 
                 const merged = { ...structuredClone(config), [section]: updatedSection } as Config;
                 const yamlStr = serializeConfig(merged);
-                writeFileSync(configPath, yamlStr, "utf-8");
+
+                // Atomic write: write to temp, validate, rename
+                const tmpPath = `${configPath}.tmp`;
+                writeFileSync(tmpPath, yamlStr, "utf-8");
+                try {
+                    loadConfig(tmpPath);
+                } catch (validationErr) {
+                    // Clean up temp file on validation failure
+                    try { renameSync(tmpPath, `${configPath}.failed`); } catch { /* ignore */ }
+                    throw new Error(`Config validation failed: ${String(validationErr)}`);
+                }
+                renameSync(tmpPath, configPath);
 
                 await reply(`✅ Updated \`${section}.${key}\` = \`${rawValue}\``);
             } catch (err) {
