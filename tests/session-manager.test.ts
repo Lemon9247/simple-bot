@@ -400,4 +400,125 @@ describe("SessionManager", () => {
             vi.useRealTimers();
         });
     });
+
+    // ─── Error handling (review P0) ──────────────────────────
+
+    describe("error handling", () => {
+        it("recovers to idle state when bridge factory throws", async () => {
+            const factory = () => {
+                throw new Error("Spawn failed");
+            };
+            sm = new SessionManager(baseConfig, factory);
+
+            await expect(sm.startSession("main")).rejects.toThrow("Spawn failed");
+            expect(sm.getSessionInfo("main")?.state).toBe("idle");
+            expect(sm.getSessionInfo("main")?.bridge).toBeNull();
+        });
+
+        it("recovers to idle state when bridge.start() throws", async () => {
+            const factory = (opts: any) => {
+                const { spawnFn } = createMockProcess("ok");
+                const bridge = new Bridge({ ...opts, spawnFn });
+                // Override start to throw
+                bridge.start = () => { throw new Error("Start failed"); };
+                return bridge;
+            };
+            sm = new SessionManager(baseConfig, factory);
+
+            await expect(sm.startSession("main")).rejects.toThrow("Start failed");
+            expect(sm.getSessionInfo("main")?.state).toBe("idle");
+            expect(sm.getSessionInfo("main")?.bridge).toBeNull();
+        });
+
+        it("getOrStartSession times out when session stuck in starting", async () => {
+            const { factory } = makeBridgeFactory();
+            sm = new SessionManager(baseConfig, factory);
+
+            // Manually set state to "starting" to simulate stuck session
+            const info = sm.getSessionInfo("main")!;
+            info.state = "starting";
+
+            vi.useFakeTimers();
+
+            // Catch the rejection eagerly so it doesn't become unhandled
+            // during fake timer advancement
+            let caughtError: Error | null = null;
+            const promise = sm.getOrStartSession("main").catch((err) => { caughtError = err; });
+
+            // Advance past 30s timeout
+            await vi.advanceTimersByTimeAsync(31_000);
+            await promise;
+
+            vi.useRealTimers();
+
+            // Reset state so afterEach cleanup works
+            info.state = "idle";
+
+            expect(caughtError).not.toBeNull();
+            expect(caughtError!.message).toContain("start timeout");
+        });
+
+        it("concurrent startSession calls don't create duplicate bridges", async () => {
+            const { factory, bridges } = makeBridgeFactory();
+            sm = new SessionManager(baseConfig, factory);
+
+            // Call concurrently — second should get the same bridge
+            const [bridge1, bridge2] = await Promise.all([
+                sm.getOrStartSession("main"),
+                sm.getOrStartSession("main"),
+            ]);
+
+            expect(bridge1).toBe(bridge2);
+            expect(bridges).toHaveLength(1);
+        });
+
+        it("stopAll continues when one session fails to stop", async () => {
+            const { factory } = makeBridgeFactory();
+            const config: Config = {
+                ...baseConfig,
+                sessions: {
+                    main: { pi: { cwd: "/tmp/a" } },
+                    work: { pi: { cwd: "/tmp/b" } },
+                },
+            };
+            sm = new SessionManager(config, factory);
+
+            await sm.startSession("main");
+            await sm.startSession("work");
+
+            // Make "main" session's bridge.stop() throw
+            const mainBridge = sm.getSession("main")!;
+            const origStop = mainBridge.stop.bind(mainBridge);
+            mainBridge.stop = async () => {
+                await origStop();
+                throw new Error("Stop failed");
+            };
+
+            // stopAll should not throw — should handle the error and continue
+            await sm.stopAll();
+
+            // Both sessions should be idle regardless
+            expect(sm.getSessionInfo("main")?.state).toBe("idle");
+            expect(sm.getSessionInfo("work")?.state).toBe("idle");
+        });
+
+        it("logs stop errors in stopSession", async () => {
+            const { factory } = makeBridgeFactory();
+            sm = new SessionManager(baseConfig, factory);
+
+            await sm.startSession("main");
+
+            const mainBridge = sm.getSession("main")!;
+            const origStop = mainBridge.stop.bind(mainBridge);
+            mainBridge.stop = async () => {
+                await origStop();
+                throw new Error("Stop error");
+            };
+
+            // Should not throw — error is caught and logged
+            await sm.stopSession("main");
+            expect(sm.getSessionInfo("main")?.state).toBe("idle");
+            expect(sm.getSessionInfo("main")?.bridge).toBeNull();
+        });
+    });
 });

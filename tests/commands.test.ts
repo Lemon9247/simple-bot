@@ -506,6 +506,44 @@ describe("bot!reboot (session-aware)", () => {
         expect(msgs.some((m) => m.includes("Rebooting 1 session(s)"))).toBe(true);
         expect(msgs.some((m) => m.includes("main"))).toBe(true);
     });
+
+    it("bot!reboot ALL is case-insensitive", async () => {
+        const sm = new SessionManager(multiSessionConfig, () => {
+            return new Bridge({ cwd: "/tmp", spawnFn: createRespawnableMockFn() });
+        });
+        daemon = new Daemon(multiSessionConfig, sm);
+
+        const listener = new MockListener("discord");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        await sm.getOrStartSession("main");
+
+        sendCommand(listener, "bot!reboot ALL");
+        await new Promise((r) => setTimeout(r, 200));
+
+        const msgs = listener.sent.map((s) => s.text);
+        expect(msgs.some((m) => m.includes("Rebooting"))).toBe(true);
+    });
+
+    it("bot!reboot matches session names case-insensitively", async () => {
+        const sm = new SessionManager(multiSessionConfig, () => {
+            return new Bridge({ cwd: "/tmp", spawnFn: createRespawnableMockFn() });
+        });
+        daemon = new Daemon(multiSessionConfig, sm);
+
+        const listener = new MockListener("discord");
+        daemon.addListener(listener);
+        await daemon.start();
+
+        await sm.getOrStartSession("work");
+
+        sendCommand(listener, "bot!reboot Work");
+        await new Promise((r) => setTimeout(r, 150));
+
+        const msgs = listener.sent.map((s) => s.text);
+        expect(msgs.some((m) => m.includes("Rebooting session") && m.includes("work"))).toBe(true);
+    });
 });
 
 describe("bot!status (session-aware)", () => {

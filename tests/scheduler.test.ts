@@ -933,7 +933,7 @@ steps:
             scheduler.stop();
         });
 
-        it("handles unknown session gracefully", async () => {
+        it("handles unknown session gracefully and emits job-error", async () => {
             await writeJob("bad-session", `---
 schedule: "0 7 * * *"
 session: nonexistent
@@ -946,6 +946,10 @@ steps:
 
             const scheduler = new Scheduler({ dir: cronDir }, mainBridge);
             scheduler.setSessionManager(sm);
+
+            const errors: any[] = [];
+            scheduler.on("job-error", (err) => errors.push(err));
+
             await scheduler.start();
 
             // Should not throw
@@ -953,6 +957,11 @@ steps:
 
             // No commands should have been sent
             expect(mainBridge.command).not.toHaveBeenCalled();
+
+            // Should have emitted a job-error event
+            expect(errors).toHaveLength(1);
+            expect(errors[0].job).toBe("bad-session");
+            expect(errors[0].session).toBe("nonexistent");
 
             scheduler.stop();
         });

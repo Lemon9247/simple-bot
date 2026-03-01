@@ -322,4 +322,25 @@ steps:
         const job = parseJobContent(content, "/cron.d/test.md");
         expect(job.session).toBe("work");
     });
+
+    it("rejects session names with invalid characters", () => {
+        const content = `---
+schedule: "0 7 * * *"
+session: "bad session!"
+steps:
+  - compact
+---`;
+        expect(() => parseJobContent(content, "test.md")).toThrow("letters, numbers, hyphens, and underscores");
+    });
+
+    it("accepts session names with hyphens and underscores", () => {
+        const content = `---
+schedule: "0 7 * * *"
+session: "my_session-1"
+steps:
+  - compact
+---`;
+        const job = parseJobContent(content, "test.md");
+        expect(job.session).toBe("my_session-1");
+    });
 });
