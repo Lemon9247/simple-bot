@@ -6,6 +6,9 @@ import { WebSocketServer, WebSocket } from "ws";
 import { writeFileSync } from "node:fs";
 import type { ServerConfig, WebhookHandler, ActivityEntry } from "./types.js";
 import type { ConfigWatcher } from "./config-watcher.js";
+import type { VaultFiles } from "./vault/files.js";
+import type { VaultGit } from "./vault/git.js";
+import { VaultPathError, VaultNotFoundError } from "./vault/files.js";
 import { redactConfig, mergeConfig, serializeConfig, loadConfig } from "./config.js";
 import * as logger from "./logger.js";
 
@@ -71,6 +74,9 @@ export class HttpServer {
     private wss: WebSocketServer;
     private wsClients = new Set<WebSocket>();
     private wsHandler?: WsRpcHandler;
+    private vaultFiles?: VaultFiles;
+    private vaultGit?: VaultGit;
+    private prefixRoutes: Array<{ prefix: string; method: string; handler: RouteHandler }> = [];
 
     constructor(config: ServerConfig, dashboard?: DashboardProvider) {
         this.config = config;
@@ -151,6 +157,155 @@ export class HttpServer {
     setConfigWatcher(watcher: ConfigWatcher, configPath: string): void {
         this.configWatcher = watcher;
         this.configPath = configPath;
+    }
+
+    setVault(files: VaultFiles, git: VaultGit): void {
+        this.vaultFiles = files;
+        this.vaultGit = git;
+        this.registerVaultRoutes();
+    }
+
+    private prefixRoute(method: string, prefix: string, handler: RouteHandler): void {
+        this.prefixRoutes.push({ prefix, method, handler });
+    }
+
+    private registerVaultRoutes(): void {
+        // List files
+        this.route("GET", "/api/files", async (req, res) => {
+            const url = new URL(req.url ?? "/", "http://localhost");
+            const dir = url.searchParams.get("dir") ?? undefined;
+            const search = url.searchParams.get("search") ?? undefined;
+
+            try {
+                const entries = await this.vaultFiles!.listFiles(dir, search);
+                this.json(res, 200, { entries });
+            } catch (err) {
+                this.handleVaultError(res, err);
+            }
+        });
+
+        // Read file (prefix match: everything after /api/files/)
+        this.prefixRoute("GET", "/api/files/", async (req, res) => {
+            const filePath = this.extractFilePath(req.url ?? "");
+            if (!filePath) {
+                this.json(res, 400, { error: "Missing file path" });
+                return;
+            }
+
+            try {
+                const result = await this.vaultFiles!.readFile(filePath);
+                this.json(res, 200, result);
+            } catch (err) {
+                this.handleVaultError(res, err);
+            }
+        });
+
+        // Write file
+        this.prefixRoute("PUT", "/api/files/", async (req, res) => {
+            const filePath = this.extractFilePath(req.url ?? "");
+            if (!filePath) {
+                this.json(res, 400, { error: "Missing file path" });
+                return;
+            }
+
+            let body: any;
+            try {
+                body = await this.readJsonBody(req);
+            } catch {
+                this.json(res, 400, { error: "Invalid JSON body" });
+                return;
+            }
+
+            if (!body || typeof body.content !== "string") {
+                this.json(res, 400, { error: "Body must include 'content' string" });
+                return;
+            }
+
+            try {
+                await this.vaultFiles!.writeFile(filePath, body.content);
+                this.json(res, 200, { ok: true, path: filePath });
+            } catch (err) {
+                this.handleVaultError(res, err);
+            }
+        });
+
+        // Delete file
+        this.prefixRoute("DELETE", "/api/files/", async (req, res) => {
+            const filePath = this.extractFilePath(req.url ?? "");
+            if (!filePath) {
+                this.json(res, 400, { error: "Missing file path" });
+                return;
+            }
+
+            try {
+                await this.vaultFiles!.deleteFile(filePath);
+                this.json(res, 200, { ok: true, path: filePath });
+            } catch (err) {
+                this.handleVaultError(res, err);
+            }
+        });
+
+        // Git log
+        this.route("GET", "/api/git/log", async (req, res) => {
+            const url = new URL(req.url ?? "/", "http://localhost");
+            const limitParam = url.searchParams.get("limit");
+            const limit = limitParam ? parseInt(limitParam, 10) : undefined;
+
+            if (limitParam && (isNaN(limit!) || limit! < 1)) {
+                this.json(res, 400, { error: "limit must be a positive integer" });
+                return;
+            }
+
+            try {
+                const entries = await this.vaultGit!.log(limit);
+                this.json(res, 200, { entries });
+            } catch (err) {
+                logger.error("Git log error", { error: String(err) });
+                this.json(res, 500, { error: "Git operation failed" });
+            }
+        });
+
+        // Git sync
+        this.route("POST", "/api/git/sync", async (req, res) => {
+            let body: any = {};
+            try {
+                body = await this.readJsonBody(req);
+            } catch {
+                // Empty body is fine
+            }
+
+            const message = body?.message && typeof body.message === "string"
+                ? body.message
+                : undefined;
+
+            try {
+                const result = await this.vaultGit!.sync(message);
+                this.json(res, 200, result);
+            } catch (err) {
+                logger.error("Git sync error", { error: String(err) });
+                this.json(res, 500, { error: "Git operation failed" });
+            }
+        });
+    }
+
+    /** Extract the file path from a URL like /api/files/some/path.md */
+    private extractFilePath(rawUrl: string): string | null {
+        const url = new URL(rawUrl, "http://localhost");
+        const prefix = "/api/files/";
+        if (!url.pathname.startsWith(prefix)) return null;
+        const filePath = decodeURIComponent(url.pathname.slice(prefix.length));
+        return filePath || null;
+    }
+
+    private handleVaultError(res: ServerResponse, err: unknown): void {
+        if (err instanceof VaultPathError) {
+            this.json(res, 403, { error: err.message });
+        } else if (err instanceof VaultNotFoundError) {
+            this.json(res, 404, { error: err.message });
+        } else {
+            logger.error("Vault error", { error: String(err) });
+            this.json(res, 500, { error: "Internal server error" });
+        }
     }
 
     private registerRoutes(): void {
@@ -382,7 +537,7 @@ export class HttpServer {
             }
         }
 
-        // Check registered routes
+        // Check registered routes (exact match)
         const methods = this.routes.get(pathname);
         if (methods) {
             const handler = methods.get(req.method ?? "GET");
@@ -404,6 +559,24 @@ export class HttpServer {
             res.writeHead(405, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ error: "Method Not Allowed" }));
             return;
+        }
+
+        // Check prefix routes (wildcard path matching)
+        for (const route of this.prefixRoutes) {
+            if (pathname.startsWith(route.prefix) && (req.method ?? "GET") === route.method) {
+                try {
+                    const result = route.handler(req, res);
+                    if (result instanceof Promise) {
+                        await result;
+                    }
+                } catch (err) {
+                    logger.error("Route handler error", { path: pathname, error: String(err) });
+                    if (!res.headersSent) {
+                        this.json(res, 500, { error: "Internal server error" });
+                    }
+                }
+                return;
+            }
         }
 
         // Static file serving for non-API paths
