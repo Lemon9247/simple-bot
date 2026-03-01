@@ -125,7 +125,11 @@ export function parseJobContent(content: string, filePath: string, baseDir?: str
         if (typeof data.session !== "string" || !data.session.trim()) {
             throw new JobParseError(filePath, "session must be a non-empty string");
         }
-        session = data.session.trim();
+        const sessionName = data.session.trim();
+        if (!/^[a-z0-9_-]+$/i.test(sessionName)) {
+            throw new JobParseError(filePath, "session name must contain only letters, numbers, hyphens, and underscores");
+        }
+        session = sessionName;
     }
 
     return { name, file: filePath, schedule: data.schedule, steps, notify, enabled, gracePeriodMs, session, body: body.trim() };

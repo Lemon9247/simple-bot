@@ -185,16 +185,21 @@ export class HttpServer {
             }
             const names = this.dashboard.getSessionNames();
             const sessions = names.map((name) => {
-                const state = this.dashboard!.getSessionState(name);
-                const usage = this.dashboard!.getUsageBySession(name);
-                return {
-                    name,
-                    state: state?.state ?? "unknown",
-                    model: state?.model,
-                    contextSize: state?.contextSize,
-                    lastActivity: state?.lastActivity,
-                    today: usage?.today ?? null,
-                };
+                try {
+                    const state = this.dashboard!.getSessionState(name);
+                    const usage = this.dashboard!.getUsageBySession(name);
+                    return {
+                        name,
+                        state: state?.state ?? "unknown",
+                        model: state?.model,
+                        contextSize: state?.contextSize,
+                        lastActivity: state?.lastActivity,
+                        today: usage?.today ?? null,
+                    };
+                } catch (err) {
+                    logger.warn("Failed to get session info", { name, error: String(err) });
+                    return { name, state: "error", model: null, contextSize: null, lastActivity: null, today: null };
+                }
             });
             this.json(res, 200, { sessions });
         });
@@ -295,7 +300,7 @@ export class HttpServer {
                 this.json(res, 200, { ok: true, config: redactConfig(merged) });
             } catch (err) {
                 logger.error("Config API update failed", { error: String(err) });
-                this.json(res, 400, { error: `Invalid config: ${String(err)}` });
+                this.json(res, 400, { error: "Invalid config format. Check server logs for details." });
             }
         });
 
@@ -318,7 +323,8 @@ export class HttpServer {
                 return;
             }
 
-            // Validate session exists if specified
+            // Validate session exists BEFORE rate limiting so invalid
+            // sessions don't consume rate limit quota
             if (body.session && typeof body.session === "string" && this.dashboard) {
                 const validSessions = this.dashboard.getSessionNames();
                 if (!validSessions.includes(body.session)) {

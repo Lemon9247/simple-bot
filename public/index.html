@@ -559,8 +559,9 @@
                     }
                     $('sessions-panel').style.display = '';
                     let html = '';
+                    const validStates = ['running', 'idle', 'starting', 'stopping', 'error'];
                     for (const s of sessions) {
-                        const stateClass = s.state || 'idle';
+                        const stateClass = validStates.includes(s.state) ? s.state : 'unknown';
                         const costStr = s.today && s.today.cost > 0 ? '$' + s.today.cost.toFixed(4) : '';
                         const actStr = s.lastActivity ? timeAgo(s.lastActivity) : '';
                         html += '<div class="session-item">'

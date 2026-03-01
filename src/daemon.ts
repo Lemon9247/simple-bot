@@ -388,6 +388,7 @@ export class Daemon implements DaemonRef, DashboardProvider {
             bridge = await this.sessionManager.getOrStartSession(sessionName);
         } catch (err) {
             logger.error("Failed to get session", { session: sessionName, error: String(err) });
+            await reply(`❌ Failed to start session '${sessionName}': ${String(err)}`);
             return;
         }
 
