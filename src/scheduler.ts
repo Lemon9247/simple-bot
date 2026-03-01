@@ -179,9 +179,15 @@ export class Scheduler extends EventEmitter {
                 return;
             }
 
+            const sessionName = job.session ?? this.sessionManager?.getDefaultSessionName() ?? "main";
+            this.emit("job-start", { job: job.name, session: sessionName });
             const execution = this.runSteps(job, bridge);
             this.activeExecution = execution;
-            await execution;
+            try {
+                await execution;
+            } finally {
+                this.emit("job-end", { job: job.name, session: sessionName });
+            }
         } finally {
             this.executing = false;
             this.activeExecution = null;

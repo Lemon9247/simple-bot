@@ -247,9 +247,9 @@ describe("WebSocket upgrade at /attach", () => {
         await server.stop();
     });
 
-    it("rejects upgrade without auth", async () => {
+    it("allows upgrade without auth (first-message auth required)", async () => {
         const addr = server.raw.address() as { port: number };
-        const res = await new Promise<{ statusCode: number }>((resolve, reject) => {
+        const upgraded = await new Promise<boolean>((resolve, reject) => {
             const req = request(
                 {
                     hostname: "127.0.0.1",
@@ -263,13 +263,16 @@ describe("WebSocket upgrade at /attach", () => {
                         "Sec-WebSocket-Version": "13",
                     },
                 },
-                (res) => resolve({ statusCode: res.statusCode! }),
+                () => resolve(false),
             );
-            req.on("upgrade", () => reject(new Error("Should not have upgraded")));
+            req.on("upgrade", (_res, socket) => {
+                socket.destroy();
+                resolve(true);
+            });
             req.on("error", reject);
             req.end();
         });
-        expect(res.statusCode).toBe(401);
+        expect(upgraded).toBe(true);
     });
 
     it("accepts upgrade with valid auth and completes handshake", async () => {

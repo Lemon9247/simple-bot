@@ -49,10 +49,15 @@ export interface ToolEndInfo {
     isError: boolean;
 }
 
+export interface CorsConfig {
+    origin: string;
+}
+
 export interface ServerConfig {
     port: number;
     token: string;
     publicDir?: string;
+    cors?: CorsConfig;
 }
 
 // ─── Session & Routing Types ──────────────────────────────────
@@ -82,6 +87,19 @@ export interface RoutingConfig {
     default: string;
 }
 
+// ─── Vault Types ──────────────────────────────────────────────
+
+export interface VaultConfig {
+    path: string;
+}
+
+export interface VaultFileEntry {
+    name: string;
+    path: string;
+    type: "file" | "dir";
+    children?: VaultFileEntry[];
+}
+
 // ─── Main Config ──────────────────────────────────────────────
 
 export interface Config {
@@ -106,6 +124,7 @@ export interface Config {
     cron?: CronConfig;
     server?: ServerConfig;
     tracking?: TrackingConfig;
+    vault?: VaultConfig;
     sessions?: Record<string, SessionConfig>;
     defaultSession?: string;
     routing?: RoutingConfig;
@@ -206,6 +225,6 @@ export type ConfigRedacted = {
         : K extends "matrix"
           ? { homeserver: string; user: string; token: string; storage_path?: string } | undefined
           : K extends "server"
-            ? { port: number; token: string; publicDir?: string } | undefined
+            ? { port: number; token: string; publicDir?: string; cors?: CorsConfig } | undefined
             : Config[K];
 };

@@ -14,10 +14,30 @@ function baseUrl(server: HttpServer): { host: string; port: number } {
     return { host: "127.0.0.1", port: addr.port };
 }
 
-function wsUrl(server: HttpServer, token?: string): string {
+function wsUrl(server: HttpServer): string {
     const { host, port } = baseUrl(server);
-    const tok = token ?? TEST_TOKEN;
-    return `ws://${host}:${port}/attach?token=${encodeURIComponent(tok)}`;
+    return `ws://${host}:${port}/attach`;
+}
+
+/** Connect and authenticate via first-message auth, returns the authenticated WebSocket */
+async function connectAndAuth(server: HttpServer, token?: string): Promise<WebSocket> {
+    const ws = new WebSocket(wsUrl(server));
+    await new Promise<void>((resolve, reject) => {
+        ws.onopen = () => {
+            ws.send(JSON.stringify({ type: "auth", token: token ?? TEST_TOKEN }));
+        };
+        ws.onmessage = (ev) => {
+            const msg = JSON.parse(ev.data as string);
+            if (msg.type === "auth_ok") {
+                ws.onmessage = null;
+                resolve();
+            } else if (msg.type === "error") {
+                reject(new Error(msg.error));
+            }
+        };
+        ws.onerror = () => reject(new Error("Connection failed"));
+    });
+    return ws;
 }
 
 // ─── WebSocket Connection Tests ───────────────────────────────
@@ -34,41 +54,39 @@ describe("WebSocket at /attach", () => {
         await server.stop();
     });
 
-    it("connects with valid token in query param", async () => {
-        const ws = new WebSocket(wsUrl(server));
-        await new Promise<void>((resolve, reject) => {
-            ws.onopen = () => resolve();
-            ws.onerror = () => reject(new Error("Connection failed"));
-        });
+    it("connects with valid token via first-message auth", async () => {
+        const ws = await connectAndAuth(server);
         expect(ws.readyState).toBe(WebSocket.OPEN);
         expect(server.wsClientCount).toBe(1);
         ws.close();
     });
 
     it("rejects connection with wrong token", async () => {
-        const ws = new WebSocket(wsUrl(server, "wrong-token"));
-        const closed = await new Promise<boolean>((resolve) => {
-            ws.onopen = () => resolve(false);
-            ws.onclose = () => resolve(true);
-            ws.onerror = () => {}; // suppress
+        const ws = new WebSocket(wsUrl(server));
+        const error = await new Promise<string>((resolve) => {
+            ws.onopen = () => {
+                ws.send(JSON.stringify({ type: "auth", token: "wrong-token" }));
+            };
+            ws.onmessage = (ev) => {
+                const msg = JSON.parse(ev.data as string);
+                if (msg.type === "error") resolve(msg.error);
+            };
+            ws.onclose = () => resolve("closed");
         });
-        expect(closed).toBe(true);
+        expect(error).toBe("Unauthorized");
     });
 
     it("tracks client count on connect/disconnect", async () => {
         expect(server.wsClientCount).toBe(0);
 
-        const ws1 = new WebSocket(wsUrl(server));
-        await new Promise<void>((resolve) => { ws1.onopen = () => resolve(); });
+        const ws1 = await connectAndAuth(server);
         expect(server.wsClientCount).toBe(1);
 
-        const ws2 = new WebSocket(wsUrl(server));
-        await new Promise<void>((resolve) => { ws2.onopen = () => resolve(); });
+        const ws2 = await connectAndAuth(server);
         expect(server.wsClientCount).toBe(2);
 
         ws1.close();
         await new Promise<void>((resolve) => { ws1.onclose = () => resolve(); });
-        // Small delay for server to process
         await new Promise((r) => setTimeout(r, 50));
         expect(server.wsClientCount).toBe(1);
 
@@ -79,8 +97,7 @@ describe("WebSocket at /attach", () => {
     });
 
     it("receives broadcast events", async () => {
-        const ws = new WebSocket(wsUrl(server));
-        await new Promise<void>((resolve) => { ws.onopen = () => resolve(); });
+        const ws = await connectAndAuth(server);
 
         const received: any[] = [];
         ws.onmessage = (ev) => {
@@ -97,12 +114,8 @@ describe("WebSocket at /attach", () => {
     });
 
     it("broadcasts to all connected clients", async () => {
-        const ws1 = new WebSocket(wsUrl(server));
-        const ws2 = new WebSocket(wsUrl(server));
-        await Promise.all([
-            new Promise<void>((r) => { ws1.onopen = () => r(); }),
-            new Promise<void>((r) => { ws2.onopen = () => r(); }),
-        ]);
+        const ws1 = await connectAndAuth(server);
+        const ws2 = await connectAndAuth(server);
 
         const received1: any[] = [];
         const received2: any[] = [];
@@ -119,6 +132,29 @@ describe("WebSocket at /attach", () => {
 
         ws1.close();
         ws2.close();
+    });
+
+    it("does not broadcast to unauthenticated connections", async () => {
+        // Connect but don't authenticate
+        const unauthWs = new WebSocket(wsUrl(server));
+        await new Promise<void>((resolve) => { unauthWs.onopen = () => resolve(); });
+
+        // Connect and authenticate
+        const authWs = await connectAndAuth(server);
+
+        const unauthReceived: any[] = [];
+        const authReceived: any[] = [];
+        unauthWs.onmessage = (ev) => unauthReceived.push(JSON.parse(ev.data as string));
+        authWs.onmessage = (ev) => authReceived.push(JSON.parse(ev.data as string));
+
+        server.broadcastEvent({ type: "test", data: "secret" });
+
+        await new Promise((r) => setTimeout(r, 50));
+        expect(authReceived).toHaveLength(1);
+        expect(unauthReceived).toHaveLength(0);
+
+        unauthWs.close();
+        authWs.close();
     });
 });
 
@@ -144,8 +180,7 @@ describe("WebSocket RPC handler", () => {
             return null;
         });
 
-        const ws = new WebSocket(wsUrl(server));
-        await new Promise<void>((r) => { ws.onopen = () => r(); });
+        const ws = await connectAndAuth(server);
 
         const response = await new Promise<any>((resolve) => {
             ws.onmessage = (ev) => {
@@ -168,8 +203,7 @@ describe("WebSocket RPC handler", () => {
             throw new Error("Pi process not running");
         });
 
-        const ws = new WebSocket(wsUrl(server));
-        await new Promise<void>((r) => { ws.onopen = () => r(); });
+        const ws = await connectAndAuth(server);
 
         const response = await new Promise<any>((resolve) => {
             ws.onmessage = (ev) => resolve(JSON.parse(ev.data as string));
@@ -184,8 +218,7 @@ describe("WebSocket RPC handler", () => {
     });
 
     it("rejects invalid JSON", async () => {
-        const ws = new WebSocket(wsUrl(server));
-        await new Promise<void>((r) => { ws.onopen = () => r(); });
+        const ws = await connectAndAuth(server);
 
         const response = await new Promise<any>((resolve) => {
             ws.onmessage = (ev) => resolve(JSON.parse(ev.data as string));
@@ -199,8 +232,7 @@ describe("WebSocket RPC handler", () => {
     });
 
     it("rejects messages without type field", async () => {
-        const ws = new WebSocket(wsUrl(server));
-        await new Promise<void>((r) => { ws.onopen = () => r(); });
+        const ws = await connectAndAuth(server);
 
         const response = await new Promise<any>((resolve) => {
             ws.onmessage = (ev) => resolve(JSON.parse(ev.data as string));
@@ -220,8 +252,7 @@ describe("WebSocket RPC handler", () => {
             return "ok";
         });
 
-        const ws = new WebSocket(wsUrl(server));
-        await new Promise<void>((r) => { ws.onopen = () => r(); });
+        const ws = await connectAndAuth(server);
 
         await new Promise<void>((resolve) => {
             ws.onmessage = () => resolve();
@@ -238,8 +269,7 @@ describe("WebSocket RPC handler", () => {
 
     it("returns error when no handler is configured", async () => {
         // Don't set a handler
-        const ws = new WebSocket(wsUrl(server));
-        await new Promise<void>((r) => { ws.onopen = () => r(); });
+        const ws = await connectAndAuth(server);
 
         const response = await new Promise<any>((resolve) => {
             ws.onmessage = (ev) => resolve(JSON.parse(ev.data as string));
@@ -253,9 +283,9 @@ describe("WebSocket RPC handler", () => {
     });
 });
 
-// ─── Auth Token via Query Param ───────────────────────────────
+// ─── Auth Tests ───────────────────────────────────────────────
 
-describe("WebSocket auth via query param", () => {
+describe("WebSocket first-message auth", () => {
     let server: HttpServer;
 
     beforeEach(async () => {
@@ -267,25 +297,38 @@ describe("WebSocket auth via query param", () => {
         await server.stop();
     });
 
-    it("accepts token in query param", async () => {
-        const { host, port } = baseUrl(server);
-        const ws = new WebSocket(`ws://${host}:${port}/attach?token=${TEST_TOKEN}`);
-        await new Promise<void>((resolve, reject) => {
-            ws.onopen = () => resolve();
-            ws.onerror = () => reject(new Error("Connection failed"));
-        });
+    it("accepts valid token via first message", async () => {
+        const ws = await connectAndAuth(server);
         expect(ws.readyState).toBe(WebSocket.OPEN);
+        expect(server.wsClientCount).toBe(1);
         ws.close();
     });
 
-    it("rejects empty token in query param", async () => {
-        const { host, port } = baseUrl(server);
-        const ws = new WebSocket(`ws://${host}:${port}/attach?token=`);
+    it("rejects empty token", async () => {
+        const ws = new WebSocket(wsUrl(server));
         const closed = await new Promise<boolean>((resolve) => {
-            ws.onopen = () => resolve(false);
+            ws.onopen = () => {
+                ws.send(JSON.stringify({ type: "auth", token: "" }));
+            };
             ws.onclose = () => resolve(true);
             ws.onerror = () => {};
         });
         expect(closed).toBe(true);
+        expect(server.wsClientCount).toBe(0);
+    });
+
+    it("rejects non-auth first message", async () => {
+        const ws = new WebSocket(wsUrl(server));
+        const error = await new Promise<string>((resolve) => {
+            ws.onopen = () => {
+                ws.send(JSON.stringify({ type: "get_state" }));
+            };
+            ws.onmessage = (ev) => {
+                const msg = JSON.parse(ev.data as string);
+                if (msg.type === "error") resolve(msg.error);
+            };
+            ws.onclose = () => resolve("closed");
+        });
+        expect(error).toBe("Unauthorized");
     });
 });

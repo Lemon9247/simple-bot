@@ -6,6 +6,9 @@ import { WebSocketServer, WebSocket } from "ws";
 import { writeFileSync } from "node:fs";
 import type { ServerConfig, WebhookHandler, ActivityEntry } from "./types.js";
 import type { ConfigWatcher } from "./config-watcher.js";
+import type { VaultFiles } from "./vault/files.js";
+import type { VaultGit } from "./vault/git.js";
+import { VaultPathError, VaultNotFoundError } from "./vault/files.js";
 import { redactConfig, mergeConfig, serializeConfig, loadConfig } from "./config.js";
 import * as logger from "./logger.js";
 
@@ -54,8 +57,11 @@ const WEBHOOK_RATE_MAX = 10;
 const WEBHOOK_GLOBAL_RATE_MAX = 30;
 const WEBHOOK_GLOBAL_BUCKET = "__global__";
 
+const AUTH_RATE_WINDOW_MS = 60_000;
+const AUTH_RATE_MAX = 10;
+
 type RouteHandler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
-export type WsRpcHandler = (message: { type: string; [key: string]: unknown }) => Promise<any>;
+export type WsRpcHandler = (message: { type: string; [key: string]: unknown }, clientId: string) => Promise<any>;
 
 export class HttpServer {
     private server: Server;
@@ -67,10 +73,15 @@ export class HttpServer {
     private configWatcher?: ConfigWatcher;
     private configPath?: string;
     private webhookRateLimits = new Map<string, number[]>();
+    private authRateLimits = new Map<string, number[]>();
     private dashboard: DashboardProvider | null;
     private wss: WebSocketServer;
-    private wsClients = new Set<WebSocket>();
+    private wsClients = new Map<string, WebSocket>();
+    private wsClientCounter = 0;
     private wsHandler?: WsRpcHandler;
+    private vaultFiles?: VaultFiles;
+    private vaultGit?: VaultGit;
+    private prefixRoutes: Array<{ prefix: string; method: string; handler: RouteHandler }> = [];
 
     constructor(config: ServerConfig, dashboard?: DashboardProvider) {
         this.config = config;
@@ -106,10 +117,18 @@ export class HttpServer {
     broadcastEvent(event: any): void {
         if (this.wsClients.size === 0) return;
         const data = JSON.stringify(event);
-        for (const client of this.wsClients) {
+        for (const [, client] of this.wsClients) {
             if (client.readyState === WebSocket.OPEN) {
                 client.send(data);
             }
+        }
+    }
+
+    /** Send an event to a specific WebSocket client by ID */
+    sendToClient(clientId: string, event: any): void {
+        const client = this.wsClients.get(clientId);
+        if (client && client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify(event));
         }
     }
 
@@ -126,7 +145,7 @@ export class HttpServer {
 
     async stop(): Promise<void> {
         // Close all WebSocket connections first
-        for (const client of this.wsClients) {
+        for (const [, client] of this.wsClients) {
             client.close(1001, "Server shutting down");
         }
         this.wsClients.clear();
@@ -151,6 +170,157 @@ export class HttpServer {
     setConfigWatcher(watcher: ConfigWatcher, configPath: string): void {
         this.configWatcher = watcher;
         this.configPath = configPath;
+    }
+
+    setVault(files: VaultFiles, git: VaultGit): void {
+        this.vaultFiles = files;
+        this.vaultGit = git;
+        this.registerVaultRoutes();
+    }
+
+    private prefixRoute(method: string, prefix: string, handler: RouteHandler): void {
+        this.prefixRoutes.push({ prefix, method, handler });
+    }
+
+    private registerVaultRoutes(): void {
+        // List files
+        this.route("GET", "/api/files", async (req, res) => {
+            const url = new URL(req.url ?? "/", "http://localhost");
+            const dir = url.searchParams.get("dir") ?? undefined;
+            const search = url.searchParams.get("search") ?? undefined;
+
+            try {
+                const entries = await this.vaultFiles!.listFiles(dir, search);
+                this.json(res, 200, { entries });
+            } catch (err) {
+                this.handleVaultError(res, err);
+            }
+        });
+
+        // Read file (prefix match: everything after /api/files/)
+        this.prefixRoute("GET", "/api/files/", async (req, res) => {
+            const filePath = this.extractFilePath(req.url ?? "");
+            if (!filePath) {
+                this.json(res, 400, { error: "Missing file path" });
+                return;
+            }
+
+            try {
+                const result = await this.vaultFiles!.readFile(filePath);
+                this.json(res, 200, result);
+            } catch (err) {
+                this.handleVaultError(res, err);
+            }
+        });
+
+        // Write file
+        this.prefixRoute("PUT", "/api/files/", async (req, res) => {
+            const filePath = this.extractFilePath(req.url ?? "");
+            if (!filePath) {
+                this.json(res, 400, { error: "Missing file path" });
+                return;
+            }
+
+            let body: any;
+            try {
+                body = await this.readJsonBody(req);
+            } catch {
+                this.json(res, 400, { error: "Invalid JSON body" });
+                return;
+            }
+
+            if (!body || typeof body.content !== "string") {
+                this.json(res, 400, { error: "Body must include 'content' string" });
+                return;
+            }
+
+            try {
+                await this.vaultFiles!.writeFile(filePath, body.content);
+                this.json(res, 200, { ok: true, path: filePath });
+            } catch (err) {
+                this.handleVaultError(res, err);
+            }
+        });
+
+        // Delete file
+        this.prefixRoute("DELETE", "/api/files/", async (req, res) => {
+            const filePath = this.extractFilePath(req.url ?? "");
+            if (!filePath) {
+                this.json(res, 400, { error: "Missing file path" });
+                return;
+            }
+
+            try {
+                await this.vaultFiles!.deleteFile(filePath);
+                this.json(res, 200, { ok: true, path: filePath });
+            } catch (err) {
+                this.handleVaultError(res, err);
+            }
+        });
+
+        // Git log
+        this.route("GET", "/api/git/log", async (req, res) => {
+            const url = new URL(req.url ?? "/", "http://localhost");
+            const limitParam = url.searchParams.get("limit");
+            const limit = limitParam ? parseInt(limitParam, 10) : undefined;
+
+            if (limitParam && (isNaN(limit!) || limit! < 1)) {
+                this.json(res, 400, { error: "limit must be a positive integer" });
+                return;
+            }
+
+            try {
+                const entries = await this.vaultGit!.log(limit);
+                this.json(res, 200, { entries });
+            } catch (err) {
+                logger.error("Git log error", { error: String(err) });
+                this.json(res, 500, { error: "Git operation failed" });
+            }
+        });
+
+        // Git sync
+        this.route("POST", "/api/git/sync", async (req, res) => {
+            let body: any = {};
+            try {
+                body = await this.readJsonBody(req);
+            } catch {
+                // Empty body is fine
+            }
+
+            const message = body?.message && typeof body.message === "string"
+                ? body.message
+                : undefined;
+
+            try {
+                const result = await this.vaultGit!.sync(message);
+                this.json(res, 200, result);
+            } catch (err) {
+                logger.error("Git sync error", { error: String(err) });
+                this.json(res, 500, { error: "Git operation failed" });
+            }
+        });
+    }
+
+    /** Extract the file path from a URL like /api/files/some/path.md */
+    private extractFilePath(rawUrl: string): string | null {
+        const url = new URL(rawUrl, "http://localhost");
+        const prefix = "/api/files/";
+        if (!url.pathname.startsWith(prefix)) return null;
+        const filePath = decodeURIComponent(url.pathname.slice(prefix.length));
+        return filePath || null;
+    }
+
+    private handleVaultError(res: ServerResponse, err: unknown): void {
+        if (err instanceof VaultPathError) {
+            // Directory-read errors get 400; path traversal errors get 403
+            const status = err.message.includes("is a directory") ? 400 : 403;
+            this.json(res, status, { error: err.message });
+        } else if (err instanceof VaultNotFoundError) {
+            this.json(res, 404, { error: err.message });
+        } else {
+            logger.error("Vault error", { error: String(err) });
+            this.json(res, 500, { error: "Internal server error" });
+        }
     }
 
     private registerRoutes(): void {
@@ -370,19 +540,63 @@ export class HttpServer {
         this.routes.get(path)!.set(method, handler);
     }
 
+    /** Extract real client IP, respecting reverse proxy headers */
+    private getClientIp(req: IncomingMessage): string {
+        // X-Forwarded-For: leftmost entry is the original client
+        const xff = req.headers["x-forwarded-for"];
+        if (xff) {
+            const first = (Array.isArray(xff) ? xff[0] : xff).split(",")[0].trim();
+            if (first) return first;
+        }
+        // X-Real-IP: single IP set by some proxies (e.g. nginx)
+        const xri = req.headers["x-real-ip"];
+        if (xri) {
+            const ip = Array.isArray(xri) ? xri[0] : xri;
+            if (ip) return ip;
+        }
+        return req.socket.remoteAddress ?? "unknown";
+    }
+
     private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
         const url = new URL(req.url ?? "/", `http://localhost`);
         const pathname = url.pathname;
 
+        // Health endpoint — no auth required
+        if (pathname === "/health" && (req.method ?? "GET") === "GET") {
+            this.json(res, 200, { status: "ok" });
+            return;
+        }
+
+        // CORS preflight — no auth required
+        if (req.method === "OPTIONS" && this.config.cors) {
+            this.setCorsHeaders(res);
+            res.writeHead(204);
+            res.end();
+            return;
+        }
+
+        // Per-IP rate limiting on auth failures
+        const clientIp = this.getClientIp(req);
+        if (this.isAuthRateLimited(clientIp)) {
+            this.json(res, 429, { error: "Too many failed auth attempts. Try again later." });
+            return;
+        }
+
         // API and attach routes require auth
         if (pathname.startsWith("/api/") || pathname === "/attach") {
             if (!this.authenticate(req)) {
+                this.recordAuthFailure(clientIp);
                 this.json(res, 401, { error: "Unauthorized" });
                 return;
             }
         }
 
-        // Check registered routes
+        // Set CORS headers on all responses if configured
+        if (this.config.cors) {
+            this.setCorsHeaders(res);
+        }
+
+        // Check registered routes (exact match)
         const methods = this.routes.get(pathname);
         if (methods) {
             const handler = methods.get(req.method ?? "GET");
@@ -406,6 +620,24 @@ export class HttpServer {
             return;
         }
 
+        // Check prefix routes (wildcard path matching)
+        for (const route of this.prefixRoutes) {
+            if (pathname.startsWith(route.prefix) && (req.method ?? "GET") === route.method) {
+                try {
+                    const result = route.handler(req, res);
+                    if (result instanceof Promise) {
+                        await result;
+                    }
+                } catch (err) {
+                    logger.error("Route handler error", { path: pathname, error: String(err) });
+                    if (!res.headersSent) {
+                        this.json(res, 500, { error: "Internal server error" });
+                    }
+                }
+                return;
+            }
+        }
+
         // Static file serving for non-API paths
         if (!pathname.startsWith("/api/") && pathname !== "/attach") {
             this.serveStatic(pathname, res);
@@ -424,17 +656,12 @@ export class HttpServer {
             return;
         }
 
-        // Auth: bearer token via Authorization header or ?token= query param
-        const queryToken = url.searchParams.get("token");
-        if (!this.authenticate(req) && queryToken !== this.config.token) {
-            socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-            socket.destroy();
-            return;
-        }
+        // If Authorization header is present, authenticate immediately (TUI/programmatic clients)
+        const headerAuth = this.authenticate(req);
 
         this.wss.handleUpgrade(req, socket, head, (ws) => {
-            this.wsClients.add(ws);
-            logger.info("WebSocket client connected at /attach");
+            const clientId = `ws-${++this.wsClientCounter}`;
+            let authenticated = headerAuth;
 
             // Keep-alive: ping every 30s so proxies/NAT don't drop idle connections.
             // The ws package handles pong responses automatically.
@@ -442,12 +669,44 @@ export class HttpServer {
                 if (ws.readyState === WebSocket.OPEN) ws.ping();
             }, 30_000);
 
+            // If not pre-authenticated via header, require first-message auth within 5s
+            let authTimeout: ReturnType<typeof setTimeout> | undefined;
+            if (!authenticated) {
+                authTimeout = setTimeout(() => {
+                    if (!authenticated) {
+                        this.wsSend(ws, { type: "error", error: "Auth timeout" });
+                        ws.close(4001, "Auth timeout");
+                    }
+                }, 5000);
+            } else {
+                // Already authenticated via header — add to clients immediately
+                this.wsClients.set(clientId, ws);
+                logger.info("WebSocket client connected at /attach (header auth)", { clientId });
+            }
+
             ws.on("message", async (rawData) => {
                 let msg: any;
                 try {
                     msg = JSON.parse(rawData.toString());
                 } catch {
                     this.wsSend(ws, { type: "error", error: "Invalid JSON" });
+                    return;
+                }
+
+                // Handle first-message auth for browser clients
+                if (!authenticated) {
+                    if (msg.type === "auth" && msg.token === this.config.token) {
+                        authenticated = true;
+                        if (authTimeout) clearTimeout(authTimeout);
+                        this.wsClients.set(clientId, ws);
+                        this.wsSend(ws, { type: "auth_ok" });
+                        logger.info("WebSocket client connected at /attach (message auth)", { clientId });
+                        return;
+                    }
+                    // Auth failed
+                    if (authTimeout) clearTimeout(authTimeout);
+                    this.wsSend(ws, { type: "error", error: "Unauthorized" });
+                    ws.close(4003, "Unauthorized");
                     return;
                 }
 
@@ -463,7 +722,7 @@ export class HttpServer {
 
                 try {
                     const { id, type, ...params } = msg;
-                    const result = await this.wsHandler({ type, ...params });
+                    const result = await this.wsHandler({ type, ...params }, clientId);
                     this.wsSend(ws, { id, type: "response", success: true, data: result });
                 } catch (err) {
                     this.wsSend(ws, { id: msg.id, type: "response", success: false, error: String(err) });
@@ -472,14 +731,16 @@ export class HttpServer {
 
             ws.on("close", () => {
                 clearInterval(pingInterval);
-                this.wsClients.delete(ws);
-                logger.info("WebSocket client disconnected");
+                if (authTimeout) clearTimeout(authTimeout);
+                this.wsClients.delete(clientId);
+                logger.info("WebSocket client disconnected", { clientId });
             });
 
             ws.on("error", (err) => {
                 clearInterval(pingInterval);
-                logger.error("WebSocket client error", { error: String(err) });
-                this.wsClients.delete(ws);
+                if (authTimeout) clearTimeout(authTimeout);
+                logger.error("WebSocket client error", { error: String(err), clientId });
+                this.wsClients.delete(clientId);
             });
         });
     }
@@ -546,6 +807,13 @@ export class HttpServer {
         const timestamps = this.webhookRateLimits.get(bucket) ?? [];
         const recent = timestamps.filter((t) => now - t < WEBHOOK_RATE_WINDOW_MS);
 
+        if (recent.length === 0) {
+            this.webhookRateLimits.delete(bucket);
+            // Still need to record this request
+            this.webhookRateLimits.set(bucket, [now]);
+            return false;
+        }
+
         if (recent.length >= max) {
             this.webhookRateLimits.set(bucket, recent);
             return true;
@@ -554,6 +822,35 @@ export class HttpServer {
         recent.push(now);
         this.webhookRateLimits.set(bucket, recent);
         return false;
+    }
+
+    private recordAuthFailure(ip: string): void {
+        const now = Date.now();
+        const timestamps = this.authRateLimits.get(ip) ?? [];
+        timestamps.push(now);
+        this.authRateLimits.set(ip, timestamps);
+    }
+
+    private isAuthRateLimited(ip: string): boolean {
+        const timestamps = this.authRateLimits.get(ip);
+        if (!timestamps) return false;
+        const now = Date.now();
+        const recent = timestamps.filter((t) => now - t < AUTH_RATE_WINDOW_MS);
+
+        if (recent.length === 0) {
+            this.authRateLimits.delete(ip);
+            return false;
+        }
+
+        this.authRateLimits.set(ip, recent);
+        return recent.length >= AUTH_RATE_MAX;
+    }
+
+    private setCorsHeaders(res: ServerResponse): void {
+        if (!this.config.cors) return;
+        res.setHeader("Access-Control-Allow-Origin", this.config.cors.origin);
+        res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+        res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
     }
 
     private json(res: ServerResponse, status: number, body: unknown): void {
