@@ -70,7 +70,8 @@ export class VaultGit {
         return new Promise((resolve, reject) => {
             execFile(command, args, { cwd: this.cwd, timeout: 30_000 }, (err, stdout, stderr) => {
                 if (err) {
-                    reject(new Error(`${command} ${args.join(" ")} failed: ${stderr || err.message}`));
+                    const output = [stderr, stdout, err.message].filter(Boolean).join("\n");
+                    reject(new Error(`${command} ${args.join(" ")} failed: ${output}`));
                     return;
                 }
                 resolve(stdout);

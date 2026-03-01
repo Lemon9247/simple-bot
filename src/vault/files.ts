@@ -51,23 +51,44 @@ export class VaultFiles {
             throw new VaultPathError(`Path outside vault: ${userPath}`);
         }
 
-        // Check if the path exists and if so, verify symlinks resolve inside vault
+        // Check that the real path (following symlinks) stays inside the vault.
+        // Walk up to the nearest existing ancestor to catch symlinked directories.
+        await this.verifyRealPath(resolved, userPath);
+
+        return resolved;
+    }
+
+    /** Verify that the real filesystem path stays inside the vault */
+    private async verifyRealPath(targetPath: string, userPath: string): Promise<void> {
+        // Try realpath on the target itself first
         try {
-            const stat = await lstat(resolved);
-            if (stat.isSymbolicLink()) {
-                const real = await realpath(resolved);
-                if (!real.startsWith(this.root + sep) && real !== this.root) {
-                    throw new VaultPathError(`Symlink resolves outside vault: ${userPath}`);
-                }
+            const real = await realpath(targetPath);
+            if (!real.startsWith(this.root + sep) && real !== this.root) {
+                throw new VaultPathError(`Symlink resolves outside vault: ${userPath}`);
             }
+            return;
         } catch (err) {
-            // File doesn't exist yet — that's fine for write operations
             if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
                 throw err;
             }
         }
 
-        return resolved;
+        // File doesn't exist — check the nearest existing parent
+        let parent = dirname(targetPath);
+        while (parent !== this.root && parent.startsWith(this.root)) {
+            try {
+                const real = await realpath(parent);
+                if (!real.startsWith(this.root + sep) && real !== this.root) {
+                    throw new VaultPathError(`Symlink resolves outside vault: ${userPath}`);
+                }
+                return;
+            } catch (err) {
+                if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+                    throw err;
+                }
+            }
+            parent = dirname(parent);
+        }
     }
 
     async readFile(relativePath: string): Promise<{ content: string; mimeType: string }> {
