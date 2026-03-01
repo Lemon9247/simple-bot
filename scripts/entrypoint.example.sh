@@ -12,5 +12,14 @@ iptables -A OUTPUT -d 169.254.0.0/16 -j DROP
 # Disable IPv6 to prevent LAN access via link-local/ULA addresses
 sysctl -w net.ipv6.conf.all.disable_ipv6=1 2>/dev/null || true
 
+# Bootstrap Nix if /nix volume is mounted but Nix isn't installed yet.
+# Mount a persistent volume at /nix so packages survive container rebuilds.
+if [ -d /nix ] && [ ! -f /nix/.installed ]; then
+    curl -L https://nixos.org/nix/install | sh -s -- --no-daemon
+    touch /nix/.installed
+fi
+# Source Nix profile if available
+[ -f /root/.nix-profile/etc/profile.d/nix.sh ] && . /root/.nix-profile/etc/profile.d/nix.sh
+
 # Drop NET_ADMIN so the app process can't undo the rules
 exec setpriv --no-new-privs --bounding-set=-net_admin,-net_raw -- "$@"

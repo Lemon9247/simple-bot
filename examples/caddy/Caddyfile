@@ -1,0 +1,4 @@
+# Replace with your domain. Caddy handles TLS automatically.
+nest.example.com {
+    reverse_proxy nest:8484
+}
