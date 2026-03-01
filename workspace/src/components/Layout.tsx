@@ -21,7 +21,7 @@ export default function Layout() {
     const [canvasLoading, setCanvasLoading] = useState(false);
     const [canvasError, setCanvasError] = useState<string | null>(null);
 
-    const isExcalidraw = selectedFile?.endsWith(".excalidraw") ?? false;
+    const isExcalidraw = selectedFile?.toLowerCase().endsWith(".excalidraw") ?? false;
 
     // Track dirty state from FileViewer / Canvas
     const dirtyRef = useRef(false);
@@ -35,7 +35,7 @@ export default function Layout() {
 
     // Load .excalidraw file content when selected
     useEffect(() => {
-        if (!selectedFile || !selectedFile.endsWith(".excalidraw")) {
+        if (!selectedFile || !selectedFile.toLowerCase().endsWith(".excalidraw")) {
             setCanvasData(null);
             setCanvasError(null);
             return;

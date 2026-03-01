@@ -116,8 +116,10 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
                 source: "nest",
                 elements: [],
                 appState: {
-                    viewBackgroundColor: "#0d1117"
-                }
+                    viewBackgroundColor: "#0d1117",
+                    gridSize: null
+                },
+                files: {}
             }, null, 4)
             : "";
 
@@ -233,7 +235,7 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
                     <button
                         className="new-file-btn"
                         onClick={(e: ReactMouseEvent) => {
-                            const rect = (e.target as HTMLElement).getBoundingClientRect();
+                            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
                             setCreateMenu(createMenu ? null : { x: rect.left, y: rect.bottom + 4 });
                         }}
                         title="New file"

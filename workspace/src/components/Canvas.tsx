@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { Excalidraw, serializeAsJSON, THEME } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
 import { putFile } from "../api";
@@ -23,6 +23,7 @@ export default function Canvas({ initialData, filePath, onDirtyChange }: CanvasP
     const savingRef = useRef(false);
     const pendingRef = useRef(false);
     const filePathRef = useRef(filePath);
+    const abortRef = useRef(false);
 
     // Keep filePath ref current
     useEffect(() => {
@@ -34,16 +35,18 @@ export default function Canvas({ initialData, filePath, onDirtyChange }: CanvasP
         onDirtyChange?.(saveStatus === "dirty");
     }, [saveStatus, onDirtyChange]);
 
-    // Cleanup timers on unmount
+    // Cleanup timers on unmount; abort in-flight saves
     useEffect(() => {
+        abortRef.current = false;
         return () => {
+            abortRef.current = true;
             if (debounceRef.current) clearTimeout(debounceRef.current);
             if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
         };
     }, []);
 
     const doSave = useCallback(async () => {
-        if (!excalidrawAPI) return;
+        if (!excalidrawAPI || abortRef.current) return;
         if (savingRef.current) {
             pendingRef.current = true;
             return;
@@ -59,41 +62,47 @@ export default function Canvas({ initialData, filePath, onDirtyChange }: CanvasP
             const json = serializeAsJSON(elements, appState, files, "local");
 
             await putFile(filePathRef.current, json);
+            if (abortRef.current) return;
             setSaveStatus("saved");
 
             if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
             savedTimerRef.current = setTimeout(() => setSaveStatus("clean"), 2000);
         } catch {
-            setSaveStatus("error");
+            if (!abortRef.current) setSaveStatus("error");
         } finally {
             savingRef.current = false;
             // If a save was requested while we were saving, do it now
             if (pendingRef.current) {
                 pendingRef.current = false;
-                doSave();
+                await doSave();
             }
         }
     }, [excalidrawAPI]);
+
+    const doSaveRef = useRef(doSave);
+    useEffect(() => { doSaveRef.current = doSave; }, [doSave]);
 
     const handleChange = useCallback(() => {
         setSaveStatus("dirty");
         if (debounceRef.current) clearTimeout(debounceRef.current);
         debounceRef.current = setTimeout(() => {
-            doSave();
+            doSaveRef.current();
         }, SAVE_DEBOUNCE);
-    }, [doSave]);
+    }, []); // No dependencies — stable reference
 
     // Parse initial data for Excalidraw
-    const parsedInitial = useCallback(() => {
+    const parsedInitial = useMemo(() => {
         try {
             const data = JSON.parse(initialData);
+            const isObj = (v: unknown): v is Record<string, unknown> =>
+                typeof v === "object" && v !== null && !Array.isArray(v);
             return {
-                elements: data.elements || [],
+                elements: Array.isArray(data.elements) ? data.elements : [],
                 appState: {
-                    ...(data.appState || {}),
+                    ...(isObj(data.appState) ? data.appState : {}),
                     viewBackgroundColor: data.appState?.viewBackgroundColor || "#0d1117",
                 },
-                files: data.files || undefined,
+                files: isObj(data.files) ? data.files : undefined,
             };
         } catch {
             return {
@@ -119,7 +128,7 @@ export default function Canvas({ initialData, filePath, onDirtyChange }: CanvasP
                 {saveIndicator()}
             </div>
             <Excalidraw
-                initialData={parsedInitial()}
+                initialData={parsedInitial}
                 theme={THEME.DARK}
                 onChange={handleChange}
                 excalidrawAPI={(api) => setExcalidrawAPI(api)}
