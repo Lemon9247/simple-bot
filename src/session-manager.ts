@@ -91,9 +91,15 @@ export class SessionManager extends EventEmitter {
         }
 
         if (info.state === "starting") {
-            // Wait for the bridge to become available
+            // Wait for the bridge to become available (with timeout)
             return new Promise((resolve, reject) => {
+                const startTime = Date.now();
+                const TIMEOUT_MS = 30_000;
                 const check = () => {
+                    if (Date.now() - startTime > TIMEOUT_MS) {
+                        reject(new Error(`Session ${name} start timeout after ${TIMEOUT_MS}ms`));
+                        return;
+                    }
                     if (info.state === "running" && info.bridge) {
                         this.resetIdleTimer(info);
                         resolve(info.bridge);
@@ -126,13 +132,27 @@ export class SessionManager extends EventEmitter {
         info.state = "starting";
         logger.info("Starting session", { session: name });
 
-        const bridge = this.bridgeFactory({
-            cwd: info.config.pi.cwd,
-            command: info.config.pi.command,
-            args: info.config.pi.args,
-        });
+        let bridge: Bridge;
+        try {
+            bridge = this.bridgeFactory({
+                cwd: info.config.pi.cwd,
+                command: info.config.pi.command,
+                args: info.config.pi.args,
+            });
 
-        bridge.start();
+            // Set state to running BEFORE start() so exit handler
+            // can't overwrite with stale state (race condition fix)
+            info.bridge = bridge;
+            info.state = "running";
+            info.lastActivity = Date.now();
+
+            bridge.start();
+        } catch (err) {
+            info.state = "idle";
+            info.bridge = null;
+            logger.error("Failed to start session bridge", { session: name, error: String(err) });
+            throw err;
+        }
 
         // Forward bridge events with session context
         bridge.on("exit", (code: number, signal?: string) => {
@@ -147,11 +167,7 @@ export class SessionManager extends EventEmitter {
             this.emit("session:event", name, event);
         });
 
-        info.bridge = bridge;
-        info.state = "running";
-        info.lastActivity = Date.now();
         this.resetIdleTimer(info);
-
         logger.info("Session started", { session: name });
         return bridge;
     }
@@ -179,6 +195,8 @@ export class SessionManager extends EventEmitter {
             info.bridge.removeAllListeners("exit");
             info.bridge.removeAllListeners("event");
             await info.bridge.stop();
+        } catch (err) {
+            logger.error("Error stopping session bridge", { session: name, error: String(err) });
         } finally {
             info.bridge = null;
             info.state = "idle";
@@ -194,7 +212,14 @@ export class SessionManager extends EventEmitter {
         for (const [name] of this.sessions) {
             promises.push(this.stopSession(name));
         }
-        await Promise.all(promises);
+        const results = await Promise.allSettled(promises);
+        const failures = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+        if (failures.length > 0) {
+            logger.error("Some sessions failed to stop", {
+                count: failures.length,
+                errors: failures.map((f) => String(f.reason)),
+            });
+        }
     }
 
     /**
