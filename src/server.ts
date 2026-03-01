@@ -599,17 +599,11 @@ export class HttpServer {
             return;
         }
 
-        // Auth: bearer token via Authorization header or ?token= query param
-        const queryToken = url.searchParams.get("token");
-        if (!this.authenticate(req) && queryToken !== this.config.token) {
-            socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-            socket.destroy();
-            return;
-        }
+        // If Authorization header is present, authenticate immediately (TUI/programmatic clients)
+        const headerAuth = this.authenticate(req);
 
         this.wss.handleUpgrade(req, socket, head, (ws) => {
-            this.wsClients.add(ws);
-            logger.info("WebSocket client connected at /attach");
+            let authenticated = headerAuth;
 
             // Keep-alive: ping every 30s so proxies/NAT don't drop idle connections.
             // The ws package handles pong responses automatically.
@@ -617,12 +611,44 @@ export class HttpServer {
                 if (ws.readyState === WebSocket.OPEN) ws.ping();
             }, 30_000);
 
+            // If not pre-authenticated via header, require first-message auth within 5s
+            let authTimeout: ReturnType<typeof setTimeout> | undefined;
+            if (!authenticated) {
+                authTimeout = setTimeout(() => {
+                    if (!authenticated) {
+                        this.wsSend(ws, { type: "error", error: "Auth timeout" });
+                        ws.close(4001, "Auth timeout");
+                    }
+                }, 5000);
+            } else {
+                // Already authenticated via header — add to clients immediately
+                this.wsClients.add(ws);
+                logger.info("WebSocket client connected at /attach (header auth)");
+            }
+
             ws.on("message", async (rawData) => {
                 let msg: any;
                 try {
                     msg = JSON.parse(rawData.toString());
                 } catch {
                     this.wsSend(ws, { type: "error", error: "Invalid JSON" });
+                    return;
+                }
+
+                // Handle first-message auth for browser clients
+                if (!authenticated) {
+                    if (msg.type === "auth" && msg.token === this.config.token) {
+                        authenticated = true;
+                        if (authTimeout) clearTimeout(authTimeout);
+                        this.wsClients.add(ws);
+                        this.wsSend(ws, { type: "auth_ok" });
+                        logger.info("WebSocket client connected at /attach (message auth)");
+                        return;
+                    }
+                    // Auth failed
+                    if (authTimeout) clearTimeout(authTimeout);
+                    this.wsSend(ws, { type: "error", error: "Unauthorized" });
+                    ws.close(4003, "Unauthorized");
                     return;
                 }
 
@@ -647,12 +673,14 @@ export class HttpServer {
 
             ws.on("close", () => {
                 clearInterval(pingInterval);
+                if (authTimeout) clearTimeout(authTimeout);
                 this.wsClients.delete(ws);
                 logger.info("WebSocket client disconnected");
             });
 
             ws.on("error", (err) => {
                 clearInterval(pingInterval);
+                if (authTimeout) clearTimeout(authTimeout);
                 logger.error("WebSocket client error", { error: String(err) });
                 this.wsClients.delete(ws);
             });

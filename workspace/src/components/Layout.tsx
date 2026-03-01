@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import FileBrowser from "./FileBrowser";
 import Dashboard from "./Dashboard";
 import FileViewer from "./FileViewer";
@@ -9,8 +9,16 @@ export default function Layout() {
     const [sidebarOpen, setSidebarOpen] = useState(true);
     const [chatOpen, setChatOpen] = useState(true);
     const [mobileOverlay, setMobileOverlay] = useState<"sidebar" | "chat" | null>(null);
+    const [isMobile, setIsMobile] = useState(
+        typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches
+    );
 
-    const isMobile = typeof window !== "undefined" && window.innerWidth <= 768;
+    useEffect(() => {
+        const mediaQuery = window.matchMedia("(max-width: 768px)");
+        const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+        mediaQuery.addEventListener("change", handler);
+        return () => mediaQuery.removeEventListener("change", handler);
+    }, []);
 
     const handleFileSelect = (path: string) => {
         setSelectedFile(path);

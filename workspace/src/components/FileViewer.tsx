@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { marked } from "marked";
+import DOMPurify from "dompurify";
 import { fetchFile } from "../api";
 
 interface FileViewerProps {
@@ -40,8 +41,11 @@ export default function FileViewer({ path, onBack, onWikiLink }: FileViewerProps
     const renderedHtml = useMemo(() => {
         if (!content || !isMarkdown) return "";
 
+        // Strip YAML frontmatter before rendering
+        const stripped = content.replace(/^---\n[\s\S]*?\n---\n/, '');
+
         // Replace wiki-links with clickable spans before markdown parsing
-        const withWikiLinks = content.replace(
+        const withWikiLinks = stripped.replace(
             /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
             (_match, target, display) => {
                 const label = display || target;
@@ -49,7 +53,8 @@ export default function FileViewer({ path, onBack, onWikiLink }: FileViewerProps
             }
         );
 
-        return marked.parse(withWikiLinks) as string;
+        const rawHtml = marked.parse(withWikiLinks) as string;
+        return DOMPurify.sanitize(rawHtml);
     }, [content, isMarkdown]);
 
     const handleClick = (e: React.MouseEvent) => {

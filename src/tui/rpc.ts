@@ -20,9 +20,12 @@ export class RpcClient extends EventEmitter<RpcClientEvents> {
     private shouldReconnect = true;
     private reconnectTimer?: ReturnType<typeof setTimeout>;
 
+    private token: string;
+
     constructor(host: string, port: number, token: string, session?: string) {
         super();
-        this.url = `ws://${host}:${port}/attach?token=${encodeURIComponent(token)}`;
+        this.url = `ws://${host}:${port}/attach`;
+        this.token = token;
         this.sessionName = session;
     }
 
@@ -36,9 +39,22 @@ export class RpcClient extends EventEmitter<RpcClientEvents> {
             this.ws = ws;
 
             const onOpen = () => {
-                cleanup();
-                this.emit("connected");
-                resolve();
+                // Send first-message auth
+                ws.send(JSON.stringify({ type: "auth", token: this.token }));
+            };
+
+            const onMessage = (ev: MessageEvent) => {
+                let msg: any;
+                try { msg = JSON.parse(ev.data as string); } catch { return; }
+                if (msg.type === "auth_ok") {
+                    cleanup();
+                    this.emit("connected");
+                    resolve();
+                } else if (msg.type === "error") {
+                    cleanup();
+                    ws.close();
+                    reject(new Error(msg.error ?? "Auth failed"));
+                }
             };
 
             const onError = (ev: Event) => {
@@ -53,6 +69,7 @@ export class RpcClient extends EventEmitter<RpcClientEvents> {
 
             const cleanup = () => {
                 ws.removeEventListener("open", onOpen);
+                ws.removeEventListener("message", onMessage);
                 ws.removeEventListener("error", onError);
                 ws.removeEventListener("close", onClose);
                 // Attach persistent handlers
@@ -62,6 +79,7 @@ export class RpcClient extends EventEmitter<RpcClientEvents> {
             };
 
             ws.addEventListener("open", onOpen);
+            ws.addEventListener("message", onMessage);
             ws.addEventListener("error", onError);
             ws.addEventListener("close", onClose);
         });

@@ -8,9 +8,20 @@ interface ChatMessage {
     streaming?: boolean;
 }
 
+// Escape HTML entities to prevent XSS
+function escapeHtml(text: string): string {
+    return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
 // Minimal inline markdown: bold, italic, code, code blocks
 function renderInlineMarkdown(text: string): string {
-    return text
+    const escaped = escapeHtml(text);
+    return escaped
         // Code blocks
         .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
         // Inline code
@@ -31,6 +42,7 @@ export default function Chat() {
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const reconnectTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const idCounter = useRef(0);
+    const mountedRef = useRef(true);
 
     const scrollToBottom = useCallback(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -45,14 +57,16 @@ export default function Chat() {
         if (!token) return;
 
         const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-        const ws = new WebSocket(`${proto}//${window.location.host}/attach?token=${encodeURIComponent(token)}`);
+        const ws = new WebSocket(`${proto}//${window.location.host}/attach`);
         wsRef.current = ws;
 
         ws.onopen = () => {
-            setConnected(true);
+            // Send auth as first message instead of query param
+            ws.send(JSON.stringify({ type: "auth", token }));
         };
 
         ws.onclose = () => {
+            if (!mountedRef.current) return;
             setConnected(false);
             wsRef.current = null;
             // Reconnect after 3 seconds
@@ -64,8 +78,18 @@ export default function Chat() {
         };
 
         ws.onmessage = (event) => {
+            if (!mountedRef.current) return;
             try {
                 const data = JSON.parse(event.data);
+                if (data.type === "auth_ok") {
+                    setConnected(true);
+                    return;
+                }
+                if (data.type === "error" && !connected) {
+                    // Auth failed — don't reconnect with same token
+                    ws.close();
+                    return;
+                }
                 handleWsMessage(data);
             } catch {
                 // ignore malformed messages
@@ -76,12 +100,14 @@ export default function Chat() {
     useEffect(() => {
         connect();
         return () => {
+            mountedRef.current = false;
             clearTimeout(reconnectTimer.current);
             wsRef.current?.close();
         };
     }, [connect]);
 
     const handleWsMessage = (data: any) => {
+        if (!mountedRef.current) return;
         if (data.type === "content_block_delta" && data.delta?.text) {
             // Streaming text delta — append to current agent message
             setMessages((prev) => {

@@ -31,19 +31,32 @@ export function extractHashToken(): string | null {
 
 async function apiFetch<T = unknown>(path: string, init?: RequestInit): Promise<T> {
     const token = getToken();
-    const res = await fetch(path, {
-        ...init,
-        headers: {
-            ...init?.headers,
-            Authorization: `Bearer ${token}`,
-            ...(init?.body ? { "Content-Type": "application/json" } : {}),
-        },
-    });
-    if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new ApiError(res.status, body?.error ?? res.statusText);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+
+    try {
+        const res = await fetch(path, {
+            ...init,
+            signal: controller.signal,
+            headers: {
+                ...init?.headers,
+                Authorization: `Bearer ${token}`,
+                ...(init?.body ? { "Content-Type": "application/json" } : {}),
+            },
+        });
+        clearTimeout(timeout);
+        if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new ApiError(res.status, body?.error ?? res.statusText);
+        }
+        return res.json();
+    } catch (err) {
+        clearTimeout(timeout);
+        if (err instanceof DOMException && err.name === "AbortError") {
+            throw new ApiError(0, "Request timed out — server may be unreachable");
+        }
+        throw err;
     }
-    return res.json();
 }
 
 export class ApiError extends Error {

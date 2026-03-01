@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { fetchStatus, fetchSessions, fetchCron, fetchUsage, fetchActivity, fetchLogs } from "../api";
 import type { SessionInfo } from "../api";
 
@@ -53,69 +53,42 @@ export default function Dashboard() {
     const [logs, setLogs] = useState<any[]>([]);
     const logRef = useRef<HTMLDivElement>(null);
 
-    const refreshStatus = useCallback(async () => {
-        try { setStatus(await fetchStatus()); } catch { /* ignore */ }
-    }, []);
-
-    const refreshSessions = useCallback(async () => {
-        try {
-            const d = await fetchSessions();
-            setSessions(d.sessions || []);
-        } catch { /* ignore */ }
-    }, []);
-
-    const refreshCron = useCallback(async () => {
-        try {
-            const d = await fetchCron();
-            setCronJobs(d.jobs || []);
-        } catch { /* ignore */ }
-    }, []);
-
-    const refreshUsage = useCallback(async () => {
-        try { setUsage(await fetchUsage()); } catch { /* ignore */ }
-    }, []);
-
-    const refreshActivity = useCallback(async () => {
-        try {
-            const d = await fetchActivity();
-            setActivity(d.entries || []);
-        } catch { /* ignore */ }
-    }, []);
-
-    const refreshLogs = useCallback(async () => {
-        try {
-            const d = await fetchLogs();
-            setLogs(d.entries || []);
-        } catch { /* ignore */ }
-    }, []);
-
+    // Consolidated polling: fast (5s) for activity+sessions, slow (15s) for the rest
     useEffect(() => {
+        const pollFast = async () => {
+            const results = await Promise.allSettled([
+                fetchActivity(),
+                fetchSessions(),
+            ]);
+            if (results[0].status === "fulfilled") setActivity(results[0].value.entries || []);
+            if (results[1].status === "fulfilled") setSessions(results[1].value.sessions || []);
+        };
+
+        const pollSlow = async () => {
+            const results = await Promise.allSettled([
+                fetchStatus(),
+                fetchUsage(),
+                fetchCron(),
+                fetchLogs(),
+            ]);
+            if (results[0].status === "fulfilled") setStatus(results[0].value);
+            if (results[1].status === "fulfilled") setUsage(results[1].value);
+            if (results[2].status === "fulfilled") setCronJobs(results[2].value.jobs || []);
+            if (results[3].status === "fulfilled") setLogs(results[3].value.entries || []);
+        };
+
         // Initial fetch
-        refreshStatus();
-        refreshSessions();
-        refreshCron();
-        refreshUsage();
-        refreshActivity();
-        refreshLogs();
+        pollFast();
+        pollSlow();
 
-        // Fast polling: activity + sessions
-        const fastTimers = [
-            setInterval(refreshActivity, REFRESH_FAST),
-            setInterval(refreshSessions, REFRESH_FAST),
-        ];
-
-        // Slow polling: everything else
-        const slowTimers = [
-            setInterval(refreshStatus, REFRESH_SLOW),
-            setInterval(refreshUsage, REFRESH_SLOW),
-            setInterval(refreshCron, REFRESH_SLOW),
-            setInterval(refreshLogs, REFRESH_SLOW),
-        ];
+        const fastTimer = setInterval(pollFast, REFRESH_FAST);
+        const slowTimer = setInterval(pollSlow, REFRESH_SLOW);
 
         return () => {
-            [...fastTimers, ...slowTimers].forEach(clearInterval);
+            clearInterval(fastTimer);
+            clearInterval(slowTimer);
         };
-    }, [refreshStatus, refreshSessions, refreshCron, refreshUsage, refreshActivity, refreshLogs]);
+    }, []);
 
     // Auto-scroll logs
     useEffect(() => {
