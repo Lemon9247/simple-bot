@@ -49,10 +49,15 @@ export interface ToolEndInfo {
     isError: boolean;
 }
 
+export interface CorsConfig {
+    origin: string;
+}
+
 export interface ServerConfig {
     port: number;
     token: string;
     publicDir?: string;
+    cors?: CorsConfig;
 }
 
 // ─── Session & Routing Types ──────────────────────────────────
@@ -220,6 +225,6 @@ export type ConfigRedacted = {
         : K extends "matrix"
           ? { homeserver: string; user: string; token: string; storage_path?: string } | undefined
           : K extends "server"
-            ? { port: number; token: string; publicDir?: string } | undefined
+            ? { port: number; token: string; publicDir?: string; cors?: CorsConfig } | undefined
             : Config[K];
 };

@@ -57,6 +57,9 @@ const WEBHOOK_RATE_MAX = 10;
 const WEBHOOK_GLOBAL_RATE_MAX = 30;
 const WEBHOOK_GLOBAL_BUCKET = "__global__";
 
+const AUTH_RATE_WINDOW_MS = 60_000;
+const AUTH_RATE_MAX = 10;
+
 type RouteHandler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
 export type WsRpcHandler = (message: { type: string; [key: string]: unknown }) => Promise<any>;
 
@@ -70,6 +73,7 @@ export class HttpServer {
     private configWatcher?: ConfigWatcher;
     private configPath?: string;
     private webhookRateLimits = new Map<string, number[]>();
+    private authRateLimits = new Map<string, number[]>();
     private dashboard: DashboardProvider | null;
     private wss: WebSocketServer;
     private wsClients = new Set<WebSocket>();
@@ -531,12 +535,39 @@ export class HttpServer {
         const url = new URL(req.url ?? "/", `http://localhost`);
         const pathname = url.pathname;
 
+        // Health endpoint — no auth required
+        if (pathname === "/health" && (req.method ?? "GET") === "GET") {
+            this.json(res, 200, { status: "ok" });
+            return;
+        }
+
+        // CORS preflight — no auth required
+        if (req.method === "OPTIONS" && this.config.cors) {
+            this.setCorsHeaders(res);
+            res.writeHead(204);
+            res.end();
+            return;
+        }
+
+        // Per-IP rate limiting on auth failures
+        const clientIp = req.socket.remoteAddress ?? "unknown";
+        if (this.isAuthRateLimited(clientIp)) {
+            this.json(res, 429, { error: "Too many failed auth attempts. Try again later." });
+            return;
+        }
+
         // API and attach routes require auth
         if (pathname.startsWith("/api/") || pathname === "/attach") {
             if (!this.authenticate(req)) {
+                this.recordAuthFailure(clientIp);
                 this.json(res, 401, { error: "Unauthorized" });
                 return;
             }
+        }
+
+        // Set CORS headers on all responses if configured
+        if (this.config.cors) {
+            this.setCorsHeaders(res);
         }
 
         // Check registered routes (exact match)
@@ -757,6 +788,29 @@ export class HttpServer {
         recent.push(now);
         this.webhookRateLimits.set(bucket, recent);
         return false;
+    }
+
+    private recordAuthFailure(ip: string): void {
+        const now = Date.now();
+        const timestamps = this.authRateLimits.get(ip) ?? [];
+        timestamps.push(now);
+        this.authRateLimits.set(ip, timestamps);
+    }
+
+    private isAuthRateLimited(ip: string): boolean {
+        const timestamps = this.authRateLimits.get(ip);
+        if (!timestamps) return false;
+        const now = Date.now();
+        const recent = timestamps.filter((t) => now - t < AUTH_RATE_WINDOW_MS);
+        this.authRateLimits.set(ip, recent);
+        return recent.length >= AUTH_RATE_MAX;
+    }
+
+    private setCorsHeaders(res: ServerResponse): void {
+        if (!this.config.cors) return;
+        res.setHeader("Access-Control-Allow-Origin", this.config.cors.origin);
+        res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+        res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
     }
 
     private json(res: ServerResponse, status: number, body: unknown): void {
