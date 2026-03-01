@@ -263,7 +263,7 @@ export class Daemon implements DaemonRef, DashboardProvider {
             await this.httpServer.start();
         }
 
-        logger.info("simple-bot started", {
+        logger.info("nest started", {
             listeners: this.listeners.length,
             sessions: this.sessionManager.getSessionNames(),
         });

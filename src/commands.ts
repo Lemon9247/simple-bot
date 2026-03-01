@@ -236,7 +236,7 @@ export const statusCommand: Command = {
         }
 
         const lines = [
-            `🟢 simple-bot | uptime ${uptimeStr} | model ${modelName}`,
+            `🪹 nest | uptime ${uptimeStr} | model ${modelName}`,
             `💬 context: ${contextTokens} tokens`,
         ];
         if (usageLine) lines.splice(1, 0, usageLine);

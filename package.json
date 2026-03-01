@@ -1,5 +1,5 @@
 {
-    "name": "simple-bot",
+    "name": "nest",
     "version": "0.1.0",
     "private": true,
     "description": "A thin daemon that bridges Matrix (and other platforms) to a single pi instance via RPC",

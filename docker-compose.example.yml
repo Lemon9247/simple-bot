@@ -1,5 +1,5 @@
 services:
-    simple-bot:
+    nest:
         build: .
         restart: unless-stopped
         user: "0:0"  # safe — rootless Docker maps UID 0 to host user

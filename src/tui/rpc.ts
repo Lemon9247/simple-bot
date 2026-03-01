@@ -7,7 +7,7 @@ export interface RpcClientEvents {
 }
 
 /**
- * WebSocket RPC client for connecting to the simple-bot daemon.
+ * WebSocket RPC client for connecting to the nest daemon.
  * Uses Node 22's native WebSocket global.
  * Sends JSON commands, receives RPC responses + bridge event stream.
  * Auto-reconnects on disconnect.

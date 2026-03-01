@@ -165,11 +165,11 @@ describe("bot!status", () => {
         const status = listener.sent[0].text;
 
         // Should contain the status indicator and uptime
-        expect(status).toContain("🟢 simple-bot");
+        expect(status).toContain("🪹 nest");
         expect(status).toContain("uptime");
 
         // Should contain model from get_state mock
-        expect(status).toContain("Claude Sonnet 4");
+        expect(status).toContain("claude-sonnet-4");
 
         // Should contain context info from get_state mock (~45k)
         expect(status).toContain("~45k tokens");
@@ -271,7 +271,7 @@ describe("bot!status", () => {
         expect(listener.sent).toHaveLength(1);
         const status = listener.sent[0].text;
         // Should still work with fallback values
-        expect(status).toContain("🟢 simple-bot");
+        expect(status).toContain("🪹 nest");
         expect(status).toContain("model unknown");
         expect(status).toContain("? tokens");
     });

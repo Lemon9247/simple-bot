@@ -4,9 +4,9 @@ import { resolve } from "node:path";
 import { startTuiClient } from "./client.js";
 
 function usage(): never {
-    console.log(`simple-bot TUI client
+    console.log(`nest TUI client
 
-Usage: simple-bot-tui [options]
+Usage: nest-tui [options]
 
 Options:
   --host <addr>      Daemon host (default: localhost)
