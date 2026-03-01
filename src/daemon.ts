@@ -59,6 +59,7 @@ export class Daemon implements DaemonRef, DashboardProvider {
     private startedAt = Date.now();
     private thinkingEnabled = new Map<string, boolean>();
     private activityBuffer: ActivityEntry[] = [];
+    private activeSource = new Map<string, { type: string; wsClientId?: string }>();
 
     constructor(config: Config, sessionManager?: SessionManager) {
         this.config = config;
@@ -222,9 +223,21 @@ export class Daemon implements DaemonRef, DashboardProvider {
             if (event.type === "message_end") {
                 this.recordUsage(event, _sessionName);
             }
-            // Forward all session events to WebSocket clients
+            // Forward session events to the right destination
             if (this.httpServer) {
-                this.httpServer.broadcastEvent(event);
+                const source = this.activeSource.get(_sessionName);
+                const sourceType = source?.type ?? "unknown";
+                if (source?.wsClientId) {
+                    // Websocket-initiated: send only to the originating client
+                    this.httpServer.sendToClient(source.wsClientId, { ...event, source: sourceType });
+                } else {
+                    // Non-websocket (discord, cron, webhook): broadcast to all for monitoring
+                    this.httpServer.broadcastEvent({ ...event, source: sourceType });
+                }
+            }
+            // Clear source when agent finishes (streaming complete)
+            if (event.type === "agent_end") {
+                this.activeSource.delete(_sessionName);
             }
         });
 
@@ -251,15 +264,22 @@ export class Daemon implements DaemonRef, DashboardProvider {
                     logger.error("Unhandled error in scheduler response", { job: job.name, error: String(err) });
                 });
             });
+            this.scheduler.on("job-start", ({ session }: { job: string; session: string }) => {
+                this.activeSource.set(session, { type: "cron" });
+            });
+            this.scheduler.on("job-end", ({ session }: { job: string; session: string }) => {
+                this.activeSource.delete(session);
+            });
             await this.scheduler.start();
         }
 
         if (this.httpServer) {
             // Wire WebSocket: forward WS commands to the appropriate session's bridge
-            this.httpServer.setWsHandler(async (msg: any) => {
+            this.httpServer.setWsHandler(async (msg: any, clientId: string) => {
                 const { type, session, ...params } = msg;
                 const sessionName = session ?? this.sessionManager.getDefaultSessionName();
                 const bridge = await this.sessionManager.getOrStartSession(sessionName);
+                this.activeSource.set(sessionName, { type: "websocket", wsClientId: clientId });
                 return bridge.command(type, params);
             });
             await this.httpServer.start();
@@ -404,6 +424,7 @@ export class Daemon implements DaemonRef, DashboardProvider {
 
         // Record activity on the session (resets idle timer)
         this.sessionManager.recordActivity(sessionName);
+        this.activeSource.set(sessionName, { type: msg.platform });
 
         // If the agent is mid-chain, steer instead of queuing a new prompt
         if (bridge.busy) {
@@ -459,6 +480,7 @@ export class Daemon implements DaemonRef, DashboardProvider {
         } catch (err) {
             logger.error("Failed to process message", { error: String(err), session: sessionName });
         } finally {
+            this.activeSource.delete(sessionName);
             this.recordActivity(msg, Date.now() - activityStart);
             clearInterval(typingInterval);
         }
@@ -482,6 +504,7 @@ export class Daemon implements DaemonRef, DashboardProvider {
         }
 
         this.sessionManager.recordActivity(sessionName);
+        this.activeSource.set(sessionName, { type: "webhook" });
 
         const prefix = req.source ? `[webhook ${req.source}]` : `[webhook]`;
         const prompt = `${prefix} ${req.message}`;
@@ -501,13 +524,17 @@ export class Daemon implements DaemonRef, DashboardProvider {
             return { ok: true, queued: true };
         }
 
-        const response = await bridge.sendMessage(prompt);
+        try {
+            const response = await bridge.sendMessage(prompt);
 
-        if (req.notify) {
-            await this.sendToRoom(req.notify, response, `webhook:${req.source ?? "unknown"}`);
+            if (req.notify) {
+                await this.sendToRoom(req.notify, response, `webhook:${req.source ?? "unknown"}`);
+            }
+
+            return { ok: true, response };
+        } finally {
+            this.activeSource.delete(sessionName);
         }
-
-        return { ok: true, response };
     }
 
     private async sendToRoom(roomId: string, text: string, label: string): Promise<void> {

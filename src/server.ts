@@ -61,7 +61,7 @@ const AUTH_RATE_WINDOW_MS = 60_000;
 const AUTH_RATE_MAX = 10;
 
 type RouteHandler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
-export type WsRpcHandler = (message: { type: string; [key: string]: unknown }) => Promise<any>;
+export type WsRpcHandler = (message: { type: string; [key: string]: unknown }, clientId: string) => Promise<any>;
 
 export class HttpServer {
     private server: Server;
@@ -76,7 +76,8 @@ export class HttpServer {
     private authRateLimits = new Map<string, number[]>();
     private dashboard: DashboardProvider | null;
     private wss: WebSocketServer;
-    private wsClients = new Set<WebSocket>();
+    private wsClients = new Map<string, WebSocket>();
+    private wsClientCounter = 0;
     private wsHandler?: WsRpcHandler;
     private vaultFiles?: VaultFiles;
     private vaultGit?: VaultGit;
@@ -116,10 +117,18 @@ export class HttpServer {
     broadcastEvent(event: any): void {
         if (this.wsClients.size === 0) return;
         const data = JSON.stringify(event);
-        for (const client of this.wsClients) {
+        for (const [, client] of this.wsClients) {
             if (client.readyState === WebSocket.OPEN) {
                 client.send(data);
             }
+        }
+    }
+
+    /** Send an event to a specific WebSocket client by ID */
+    sendToClient(clientId: string, event: any): void {
+        const client = this.wsClients.get(clientId);
+        if (client && client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify(event));
         }
     }
 
@@ -136,7 +145,7 @@ export class HttpServer {
 
     async stop(): Promise<void> {
         // Close all WebSocket connections first
-        for (const client of this.wsClients) {
+        for (const [, client] of this.wsClients) {
             client.close(1001, "Server shutting down");
         }
         this.wsClients.clear();
@@ -651,6 +660,7 @@ export class HttpServer {
         const headerAuth = this.authenticate(req);
 
         this.wss.handleUpgrade(req, socket, head, (ws) => {
+            const clientId = `ws-${++this.wsClientCounter}`;
             let authenticated = headerAuth;
 
             // Keep-alive: ping every 30s so proxies/NAT don't drop idle connections.
@@ -670,8 +680,8 @@ export class HttpServer {
                 }, 5000);
             } else {
                 // Already authenticated via header — add to clients immediately
-                this.wsClients.add(ws);
-                logger.info("WebSocket client connected at /attach (header auth)");
+                this.wsClients.set(clientId, ws);
+                logger.info("WebSocket client connected at /attach (header auth)", { clientId });
             }
 
             ws.on("message", async (rawData) => {
@@ -688,9 +698,9 @@ export class HttpServer {
                     if (msg.type === "auth" && msg.token === this.config.token) {
                         authenticated = true;
                         if (authTimeout) clearTimeout(authTimeout);
-                        this.wsClients.add(ws);
+                        this.wsClients.set(clientId, ws);
                         this.wsSend(ws, { type: "auth_ok" });
-                        logger.info("WebSocket client connected at /attach (message auth)");
+                        logger.info("WebSocket client connected at /attach (message auth)", { clientId });
                         return;
                     }
                     // Auth failed
@@ -712,7 +722,7 @@ export class HttpServer {
 
                 try {
                     const { id, type, ...params } = msg;
-                    const result = await this.wsHandler({ type, ...params });
+                    const result = await this.wsHandler({ type, ...params }, clientId);
                     this.wsSend(ws, { id, type: "response", success: true, data: result });
                 } catch (err) {
                     this.wsSend(ws, { id: msg.id, type: "response", success: false, error: String(err) });
@@ -722,15 +732,15 @@ export class HttpServer {
             ws.on("close", () => {
                 clearInterval(pingInterval);
                 if (authTimeout) clearTimeout(authTimeout);
-                this.wsClients.delete(ws);
-                logger.info("WebSocket client disconnected");
+                this.wsClients.delete(clientId);
+                logger.info("WebSocket client disconnected", { clientId });
             });
 
             ws.on("error", (err) => {
                 clearInterval(pingInterval);
                 if (authTimeout) clearTimeout(authTimeout);
-                logger.error("WebSocket client error", { error: String(err) });
-                this.wsClients.delete(ws);
+                logger.error("WebSocket client error", { error: String(err), clientId });
+                this.wsClients.delete(clientId);
             });
         });
     }
