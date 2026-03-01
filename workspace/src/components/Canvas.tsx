@@ -24,6 +24,7 @@ export default function Canvas({ initialData, filePath, onDirtyChange }: CanvasP
     const pendingRef = useRef(false);
     const filePathRef = useRef(filePath);
     const abortRef = useRef(false);
+    const lastElementsHashRef = useRef("");
 
     // Keep filePath ref current
     useEffect(() => {
@@ -43,6 +44,19 @@ export default function Canvas({ initialData, filePath, onDirtyChange }: CanvasP
             if (debounceRef.current) clearTimeout(debounceRef.current);
             if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
         };
+    }, []);
+
+    // Ctrl+S to force immediate save
+    useEffect(() => {
+        const handler = (e: KeyboardEvent) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+                e.preventDefault();
+                if (debounceRef.current) clearTimeout(debounceRef.current);
+                doSaveRef.current();
+            }
+        };
+        document.addEventListener("keydown", handler);
+        return () => document.removeEventListener("keydown", handler);
     }, []);
 
     const doSave = useCallback(async () => {
@@ -82,7 +96,16 @@ export default function Canvas({ initialData, filePath, onDirtyChange }: CanvasP
     const doSaveRef = useRef(doSave);
     useEffect(() => { doSaveRef.current = doSave; }, [doSave]);
 
-    const handleChange = useCallback(() => {
+    const handleChange = useCallback((elements: readonly any[]) => {
+        // Fingerprint by element count + versions to ignore appState-only changes
+        // (pointer, selection, scroll) that fire onChange constantly
+        const hash = elements
+            .filter((e: any) => !e.isDeleted)
+            .map((e: any) => `${e.id}:${e.version}`)
+            .join(",");
+        if (hash === lastElementsHashRef.current) return;
+        lastElementsHashRef.current = hash;
+
         setSaveStatus("dirty");
         if (debounceRef.current) clearTimeout(debounceRef.current);
         debounceRef.current = setTimeout(() => {
@@ -96,8 +119,14 @@ export default function Canvas({ initialData, filePath, onDirtyChange }: CanvasP
             const data = JSON.parse(initialData);
             const isObj = (v: unknown): v is Record<string, unknown> =>
                 typeof v === "object" && v !== null && !Array.isArray(v);
+            const elements = Array.isArray(data.elements) ? data.elements : [];
+            // Seed the hash so opening doesn't trigger an immediate save
+            lastElementsHashRef.current = elements
+                .filter((e: any) => !e.isDeleted)
+                .map((e: any) => `${e.id}:${e.version}`)
+                .join(",");
             return {
-                elements: Array.isArray(data.elements) ? data.elements : [],
+                elements,
                 appState: {
                     ...(isObj(data.appState) ? data.appState : {}),
                     viewBackgroundColor: data.appState?.viewBackgroundColor || "#0d1117",
