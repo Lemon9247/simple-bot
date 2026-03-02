@@ -1,7 +1,7 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { createReadStream, existsSync, statSync, readdirSync, readFileSync } from "node:fs";
 import { join, extname, resolve, normalize } from "node:path";
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual, randomBytes } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import { writeFileSync } from "node:fs";
 import yaml from "js-yaml";
@@ -94,6 +94,7 @@ export class HttpServer {
     private workspaceFiles?: WorkspaceFiles;
     private extensionsConfig?: ExtensionsConfig;
     private prefixRoutes: Array<{ prefix: string; method: string; handler: RouteHandler }> = [];
+    private sessions = new Map<string, { createdAt: number }>();
 
     constructor(config: ServerConfig, dashboard?: DashboardProvider) {
         this.config = config;
@@ -471,6 +472,62 @@ export class HttpServer {
             this.json(res, 200, { pong: true });
         });
 
+        // ─── Auth Endpoints ────────────────────────────────────────
+
+        this.route("POST", "/api/auth/login", async (req, res) => {
+            let body: any;
+            try {
+                body = await this.readJsonBody(req);
+            } catch (err) {
+                this.handleBodyError(req, res, err);
+                return;
+            }
+
+            if (!body || typeof body.token !== "string") {
+                this.json(res, 400, { error: "Missing required field: token" });
+                return;
+            }
+
+            // Validate token using timing-safe comparison
+            const provided = Buffer.from(body.token);
+            const expected = Buffer.from(this.config.token);
+
+            let valid = false;
+            if (provided.length !== expected.length) {
+                const dummy = Buffer.alloc(expected.length);
+                timingSafeEqual(expected, dummy);
+            } else {
+                valid = timingSafeEqual(provided, expected);
+            }
+
+            if (!valid) {
+                const clientIp = this.getClientIp(req);
+                this.recordAuthFailure(clientIp);
+                this.json(res, 401, { error: "Unauthorized" });
+                return;
+            }
+
+            const sessionId = randomBytes(32).toString("hex");
+            this.sessions.set(sessionId, { createdAt: Date.now() });
+
+            const secure = this.config.trustProxy ? "; Secure" : "";
+            res.setHeader("Set-Cookie",
+                `nest-session=${sessionId}; HttpOnly; SameSite=Strict; Path=/${secure}`);
+            this.json(res, 200, { ok: true });
+        });
+
+        this.route("POST", "/api/auth/logout", async (req, res) => {
+            const sessionId = this.parseCookie(req);
+            if (sessionId) {
+                this.sessions.delete(sessionId);
+            }
+
+            const secure = this.config.trustProxy ? "; Secure" : "";
+            res.setHeader("Set-Cookie",
+                `nest-session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${secure}`);
+            this.json(res, 200, { ok: true });
+        });
+
         this.route("GET", "/api/status", (_req, res) => {
             if (this.dashboard) {
                 this.json(res, 200, {
@@ -739,8 +796,8 @@ export class HttpServer {
             return;
         }
 
-        // API and attach routes require auth
-        if (pathname.startsWith("/api/") || pathname === "/attach") {
+        // API and attach routes require auth (except login endpoint)
+        if ((pathname.startsWith("/api/") || pathname === "/attach") && pathname !== "/api/auth/login") {
             if (!this.authenticate(req)) {
                 this.recordAuthFailure(clientIp);
                 this.json(res, 401, { error: "Unauthorized" });
@@ -919,6 +976,13 @@ export class HttpServer {
     }
 
     private authenticate(req: IncomingMessage): boolean {
+        // Check session cookie first (browser clients)
+        const sessionId = this.parseCookie(req);
+        if (sessionId && this.sessions.has(sessionId)) {
+            return true;
+        }
+
+        // Fall back to Bearer token (TUI/programmatic clients)
         const auth = req.headers["authorization"];
         if (!auth) return false;
 
@@ -937,6 +1001,13 @@ export class HttpServer {
         }
 
         return timingSafeEqual(provided, expected);
+    }
+
+    private parseCookie(req: IncomingMessage): string | null {
+        const cookie = req.headers.cookie;
+        if (!cookie) return null;
+        const match = cookie.match(/(?:^|;\s*)nest-session=([^\s;]+)/);
+        return match ? match[1] : null;
     }
 
     private serveStatic(pathname: string, res: ServerResponse): void {
