@@ -6,9 +6,8 @@ import { WebSocketServer, WebSocket } from "ws";
 import { writeFileSync } from "node:fs";
 import type { ServerConfig, WebhookHandler, ActivityEntry } from "./types.js";
 import type { ConfigWatcher } from "./config-watcher.js";
-import type { VaultFiles } from "./vault/files.js";
-import type { VaultGit } from "./vault/git.js";
-import { VaultPathError, VaultNotFoundError } from "./vault/files.js";
+import type { WorkspaceFiles } from "./vault/files.js";
+import { FilePathError, FileNotFoundError } from "./vault/files.js";
 import { redactConfig, mergeConfig, serializeConfig, loadConfig } from "./config.js";
 import * as logger from "./logger.js";
 
@@ -79,8 +78,7 @@ export class HttpServer {
     private wsClients = new Map<string, WebSocket>();
     private wsClientCounter = 0;
     private wsHandler?: WsRpcHandler;
-    private vaultFiles?: VaultFiles;
-    private vaultGit?: VaultGit;
+    private workspaceFiles?: WorkspaceFiles;
     private prefixRoutes: Array<{ prefix: string; method: string; handler: RouteHandler }> = [];
 
     constructor(config: ServerConfig, dashboard?: DashboardProvider) {
@@ -172,32 +170,45 @@ export class HttpServer {
         this.configPath = configPath;
     }
 
-    setVault(files: VaultFiles, git: VaultGit): void {
-        this.vaultFiles = files;
-        this.vaultGit = git;
-        this.registerVaultRoutes();
+    setFiles(files: WorkspaceFiles): void {
+        this.workspaceFiles = files;
+        this.registerFileRoutes();
     }
+
+
 
     private prefixRoute(method: string, prefix: string, handler: RouteHandler): void {
         this.prefixRoutes.push({ prefix, method, handler });
     }
 
-    private registerVaultRoutes(): void {
-        // List files
+    private registerFileRoutes(): void {
+        // List configured roots
+        this.route("GET", "/api/roots", async (_req, res) => {
+            const roots = this.workspaceFiles!.getRootNames();
+            this.json(res, 200, { roots });
+        });
+
+        // List files — requires ?root=name
         this.route("GET", "/api/files", async (req, res) => {
             const url = new URL(req.url ?? "/", "http://localhost");
+            const root = url.searchParams.get("root");
             const dir = url.searchParams.get("dir") ?? undefined;
             const search = url.searchParams.get("search") ?? undefined;
 
+            if (!root) {
+                this.json(res, 400, { error: "Missing required 'root' parameter" });
+                return;
+            }
+
             try {
-                const entries = await this.vaultFiles!.listFiles(dir, search);
+                const entries = await this.workspaceFiles!.listFiles(root, dir, search);
                 this.json(res, 200, { entries });
             } catch (err) {
-                this.handleVaultError(res, err);
+                this.handleFileError(res, err);
             }
         });
 
-        // Move file
+        // Move file — requires root in body
         this.route("POST", "/api/files/move", async (req, res) => {
             let body: any;
             try {
@@ -207,8 +218,8 @@ export class HttpServer {
                 return;
             }
 
-            if (!body || typeof body.from !== "string" || typeof body.to !== "string") {
-                this.json(res, 400, { error: "Body must include 'from' and 'to' strings" });
+            if (!body || typeof body.root !== "string" || typeof body.from !== "string" || typeof body.to !== "string") {
+                this.json(res, 400, { error: "Body must include 'root', 'from', and 'to' strings" });
                 return;
             }
 
@@ -218,58 +229,58 @@ export class HttpServer {
             }
 
             try {
-                await this.vaultFiles!.moveFile(body.from, body.to);
+                await this.workspaceFiles!.moveFile(body.root, body.from, body.to);
                 this.json(res, 200, { ok: true, from: body.from, to: body.to });
             } catch (err) {
-                this.handleVaultError(res, err);
+                this.handleFileError(res, err);
             }
         });
 
-        // Read file (prefix match: everything after /api/files/)
+        // Read file: /api/files/:root/:path...
         this.prefixRoute("GET", "/api/files/", async (req, res) => {
-            const filePath = this.extractFilePath(req.url ?? "");
-            if (!filePath) {
-                this.json(res, 400, { error: "Missing file path" });
+            const parsed = this.extractRootAndPath(req.url ?? "");
+            if (!parsed) {
+                this.json(res, 400, { error: "Missing root and file path" });
                 return;
             }
+            const { root, filePath } = parsed;
 
-            // Raw binary response when ?raw=true
             const url = new URL(req.url ?? "/", "http://localhost");
             if (url.searchParams.get("raw") === "true") {
                 try {
-                    const result = await this.vaultFiles!.readFileRaw(filePath);
+                    const result = await this.workspaceFiles!.readFileRaw(root, filePath);
                     const headers: Record<string, string | number> = {
                         "Content-Type": result.mimeType,
                         "Content-Length": result.buffer.length,
                         "X-Content-Type-Options": "nosniff",
                     };
-                    // SVGs can contain scripts — restrict with CSP
                     if (result.mimeType === "image/svg+xml") {
                         headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'";
                     }
                     res.writeHead(200, headers);
                     res.end(result.buffer);
                 } catch (err) {
-                    this.handleVaultError(res, err);
+                    this.handleFileError(res, err);
                 }
                 return;
             }
 
             try {
-                const result = await this.vaultFiles!.readFile(filePath);
+                const result = await this.workspaceFiles!.readFile(root, filePath);
                 this.json(res, 200, result);
             } catch (err) {
-                this.handleVaultError(res, err);
+                this.handleFileError(res, err);
             }
         });
 
-        // Write file
+        // Write file: /api/files/:root/:path...
         this.prefixRoute("PUT", "/api/files/", async (req, res) => {
-            const filePath = this.extractFilePath(req.url ?? "");
-            if (!filePath) {
-                this.json(res, 400, { error: "Missing file path" });
+            const parsed = this.extractRootAndPath(req.url ?? "");
+            if (!parsed) {
+                this.json(res, 400, { error: "Missing root and file path" });
                 return;
             }
+            const { root, filePath } = parsed;
 
             let body: any;
             try {
@@ -285,90 +296,54 @@ export class HttpServer {
             }
 
             try {
-                await this.vaultFiles!.writeFile(filePath, body.content);
+                await this.workspaceFiles!.writeFile(root, filePath, body.content);
                 this.json(res, 200, { ok: true, path: filePath });
             } catch (err) {
-                this.handleVaultError(res, err);
+                this.handleFileError(res, err);
             }
         });
 
-        // Delete file
+        // Delete file: /api/files/:root/:path...
         this.prefixRoute("DELETE", "/api/files/", async (req, res) => {
-            const filePath = this.extractFilePath(req.url ?? "");
-            if (!filePath) {
-                this.json(res, 400, { error: "Missing file path" });
+            const parsed = this.extractRootAndPath(req.url ?? "");
+            if (!parsed) {
+                this.json(res, 400, { error: "Missing root and file path" });
                 return;
             }
+            const { root, filePath } = parsed;
 
             try {
-                await this.vaultFiles!.deleteFile(filePath);
+                await this.workspaceFiles!.deleteFile(root, filePath);
                 this.json(res, 200, { ok: true, path: filePath });
             } catch (err) {
-                this.handleVaultError(res, err);
-            }
-        });
-
-        // Git log
-        this.route("GET", "/api/git/log", async (req, res) => {
-            const url = new URL(req.url ?? "/", "http://localhost");
-            const limitParam = url.searchParams.get("limit");
-            const limit = limitParam ? parseInt(limitParam, 10) : undefined;
-
-            if (limitParam && (isNaN(limit!) || limit! < 1)) {
-                this.json(res, 400, { error: "limit must be a positive integer" });
-                return;
-            }
-
-            try {
-                const entries = await this.vaultGit!.log(limit);
-                this.json(res, 200, { entries });
-            } catch (err) {
-                logger.error("Git log error", { error: String(err) });
-                this.json(res, 500, { error: "Git operation failed" });
-            }
-        });
-
-        // Git sync
-        this.route("POST", "/api/git/sync", async (req, res) => {
-            let body: any = {};
-            try {
-                body = await this.readJsonBody(req);
-            } catch {
-                // Empty body is fine
-            }
-
-            const message = body?.message && typeof body.message === "string"
-                ? body.message
-                : undefined;
-
-            try {
-                const result = await this.vaultGit!.sync(message);
-                this.json(res, 200, result);
-            } catch (err) {
-                logger.error("Git sync error", { error: String(err) });
-                this.json(res, 500, { error: "Git operation failed" });
+                this.handleFileError(res, err);
             }
         });
     }
 
-    /** Extract the file path from a URL like /api/files/some/path.md */
-    private extractFilePath(rawUrl: string): string | null {
+    /** Extract root name and file path from /api/files/:root/:path... */
+    private extractRootAndPath(rawUrl: string): { root: string; filePath: string } | null {
         const url = new URL(rawUrl, "http://localhost");
         const prefix = "/api/files/";
         if (!url.pathname.startsWith(prefix)) return null;
-        const filePath = decodeURIComponent(url.pathname.slice(prefix.length));
-        return filePath || null;
+        const rest = decodeURIComponent(url.pathname.slice(prefix.length));
+        if (!rest) return null;
+        const slashIdx = rest.indexOf("/");
+        if (slashIdx === -1) return null;
+        const root = rest.slice(0, slashIdx);
+        const filePath = rest.slice(slashIdx + 1);
+        if (!root || !filePath) return null;
+        return { root, filePath };
     }
 
-    private handleVaultError(res: ServerResponse, err: unknown): void {
-        if (err instanceof VaultPathError) {
-            // Directory-read errors get 400; path traversal errors get 403
+    private handleFileError(res: ServerResponse, err: unknown): void {
+        if (err instanceof FilePathError) {
             const status = err.message.includes("is a directory") ? 400 : 403;
             this.json(res, status, { error: err.message });
-        } else if (err instanceof VaultNotFoundError) {
+        } else if (err instanceof FileNotFoundError) {
             this.json(res, 404, { error: err.message });
         } else {
-            logger.error("Vault error", { error: String(err) });
+            logger.error("File error", { error: String(err) });
             this.json(res, 500, { error: "Internal server error" });
         }
     }

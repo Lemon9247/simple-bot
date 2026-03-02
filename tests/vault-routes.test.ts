@@ -1,15 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { request } from "node:http";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { HttpServer } from "../src/server.js";
-import { VaultFiles } from "../src/vault/files.js";
-import { VaultGit } from "../src/vault/git.js";
+import { WorkspaceFiles } from "../src/vault/files.js";
 import type { ServerConfig } from "../src/types.js";
 
 const TEST_TOKEN = "vault-test-token";
-const VAULT_DIR = join(import.meta.dirname!, "__test_vault_routes__");
+const TEST_DIR = join(import.meta.dirname!, "__test_vault_routes__");
+const ROOT_NAME = "test";
 
 function makeConfig(): ServerConfig {
     return { port: 0, token: TEST_TOKEN };
@@ -59,28 +58,33 @@ function baseUrl(server: HttpServer): string {
     return `http://127.0.0.1:${addr.port}`;
 }
 
+// Helper: file API path includes the root name
+function filePath(path: string): string {
+    return `/api/files/${ROOT_NAME}/${path}`;
+}
+
 // ─── File Routes ──────────────────────────────────────────────
 
-describe("Vault file routes", () => {
+describe("Multi-root file routes", () => {
     let server: HttpServer;
 
     beforeEach(async () => {
-        mkdirSync(VAULT_DIR, { recursive: true });
+        mkdirSync(TEST_DIR, { recursive: true });
         server = new HttpServer(makeConfig());
-        server.setVault(new VaultFiles(VAULT_DIR), new VaultGit(VAULT_DIR));
+        server.setFiles(new WorkspaceFiles({ [ROOT_NAME]: TEST_DIR }));
         await server.start();
     });
 
     afterEach(async () => {
         await server.stop();
-        rmSync(VAULT_DIR, { recursive: true, force: true });
+        rmSync(TEST_DIR, { recursive: true, force: true });
     });
 
     it("PUT + GET round-trip: write then read a file", async () => {
         const url = baseUrl(server);
 
         // Write
-        const putRes = await fetch(`${url}/api/files/test.md`, {
+        const putRes = await fetch(`${url}${filePath("test.md")}`, {
             method: "PUT",
             headers: authHeader(),
             body: JSON.stringify({ content: "# Hello World" }),
@@ -89,7 +93,7 @@ describe("Vault file routes", () => {
         expect(JSON.parse(putRes.body)).toEqual({ ok: true, path: "test.md" });
 
         // Read
-        const getRes = await fetch(`${url}/api/files/test.md`, {
+        const getRes = await fetch(`${url}${filePath("test.md")}`, {
             headers: authHeader(),
         });
         expect(getRes.status).toBe(200);
@@ -101,19 +105,19 @@ describe("Vault file routes", () => {
     it("PUT + DELETE + GET: write, delete, then read returns 404", async () => {
         const url = baseUrl(server);
 
-        await fetch(`${url}/api/files/doomed.md`, {
+        await fetch(`${url}${filePath("doomed.md")}`, {
             method: "PUT",
             headers: authHeader(),
             body: JSON.stringify({ content: "temporary" }),
         });
 
-        const delRes = await fetch(`${url}/api/files/doomed.md`, {
+        const delRes = await fetch(`${url}${filePath("doomed.md")}`, {
             method: "DELETE",
             headers: authHeader(),
         });
         expect(delRes.status).toBe(200);
 
-        const getRes = await fetch(`${url}/api/files/doomed.md`, {
+        const getRes = await fetch(`${url}${filePath("doomed.md")}`, {
             headers: authHeader(),
         });
         expect(getRes.status).toBe(404);
@@ -122,26 +126,26 @@ describe("Vault file routes", () => {
     it("PUT creates nested directories automatically", async () => {
         const url = baseUrl(server);
 
-        const putRes = await fetch(`${url}/api/files/deep/nested/file.md`, {
+        const putRes = await fetch(`${url}${filePath("deep/nested/file.md")}`, {
             method: "PUT",
             headers: authHeader(),
             body: JSON.stringify({ content: "deep" }),
         });
         expect(putRes.status).toBe(200);
 
-        const getRes = await fetch(`${url}/api/files/deep/nested/file.md`, {
+        const getRes = await fetch(`${url}${filePath("deep/nested/file.md")}`, {
             headers: authHeader(),
         });
         expect(getRes.status).toBe(200);
         expect(JSON.parse(getRes.body).content).toBe("deep");
     });
 
-    it("GET /api/files lists directory tree", async () => {
+    it("GET /api/files?root= lists directory tree", async () => {
         const url = baseUrl(server);
-        writeFileSync(join(VAULT_DIR, "a.md"), "");
-        writeFileSync(join(VAULT_DIR, "b.md"), "");
+        writeFileSync(join(TEST_DIR, "a.md"), "");
+        writeFileSync(join(TEST_DIR, "b.md"), "");
 
-        const res = await fetch(`${url}/api/files`, {
+        const res = await fetch(`${url}/api/files?root=${ROOT_NAME}`, {
             headers: authHeader(),
         });
         expect(res.status).toBe(200);
@@ -151,12 +155,21 @@ describe("Vault file routes", () => {
         expect(body.entries[1].name).toBe("b.md");
     });
 
-    it("GET /api/files?search= filters by filename", async () => {
+    it("GET /api/files without root returns 400", async () => {
         const url = baseUrl(server);
-        writeFileSync(join(VAULT_DIR, "notes.md"), "");
-        writeFileSync(join(VAULT_DIR, "todo.md"), "");
 
-        const res = await fetch(`${url}/api/files?search=notes`, {
+        const res = await fetch(`${url}/api/files`, {
+            headers: authHeader(),
+        });
+        expect(res.status).toBe(400);
+    });
+
+    it("GET /api/files?root=&search= filters by filename", async () => {
+        const url = baseUrl(server);
+        writeFileSync(join(TEST_DIR, "notes.md"), "");
+        writeFileSync(join(TEST_DIR, "todo.md"), "");
+
+        const res = await fetch(`${url}/api/files?root=${ROOT_NAME}&search=notes`, {
             headers: authHeader(),
         });
         expect(res.status).toBe(200);
@@ -165,13 +178,13 @@ describe("Vault file routes", () => {
         expect(body.entries[0].name).toBe("notes.md");
     });
 
-    it("GET /api/files?dir= lists specific subdirectory", async () => {
+    it("GET /api/files?root=&dir= lists specific subdirectory", async () => {
         const url = baseUrl(server);
-        mkdirSync(join(VAULT_DIR, "sub"), { recursive: true });
-        writeFileSync(join(VAULT_DIR, "sub", "inner.md"), "");
-        writeFileSync(join(VAULT_DIR, "outer.md"), "");
+        mkdirSync(join(TEST_DIR, "sub"), { recursive: true });
+        writeFileSync(join(TEST_DIR, "sub", "inner.md"), "");
+        writeFileSync(join(TEST_DIR, "outer.md"), "");
 
-        const res = await fetch(`${url}/api/files?dir=sub`, {
+        const res = await fetch(`${url}/api/files?root=${ROOT_NAME}&dir=sub`, {
             headers: authHeader(),
         });
         expect(res.status).toBe(200);
@@ -182,7 +195,7 @@ describe("Vault file routes", () => {
 
     it("GET non-existent file returns 404", async () => {
         const url = baseUrl(server);
-        const res = await fetch(`${url}/api/files/nope.md`, {
+        const res = await fetch(`${url}${filePath("nope.md")}`, {
             headers: authHeader(),
         });
         expect(res.status).toBe(404);
@@ -190,7 +203,7 @@ describe("Vault file routes", () => {
 
     it("DELETE non-existent file returns 404", async () => {
         const url = baseUrl(server);
-        const res = await fetch(`${url}/api/files/nope.md`, {
+        const res = await fetch(`${url}${filePath("nope.md")}`, {
             method: "DELETE",
             headers: authHeader(),
         });
@@ -200,14 +213,14 @@ describe("Vault file routes", () => {
     it("PUT + GET round-trip with URL-encoded filename (spaces)", async () => {
         const url = baseUrl(server);
 
-        const putRes = await fetch(`${url}/api/files/my%20notes/hello%20world.md`, {
+        const putRes = await fetch(`${url}/api/files/${ROOT_NAME}/my%20notes/hello%20world.md`, {
             method: "PUT",
             headers: authHeader(),
             body: JSON.stringify({ content: "spaced out" }),
         });
         expect(putRes.status).toBe(200);
 
-        const getRes = await fetch(`${url}/api/files/my%20notes/hello%20world.md`, {
+        const getRes = await fetch(`${url}/api/files/${ROOT_NAME}/my%20notes/hello%20world.md`, {
             headers: authHeader(),
         });
         expect(getRes.status).toBe(200);
@@ -217,9 +230,9 @@ describe("Vault file routes", () => {
 
     it("GET a directory path returns 400, not 500", async () => {
         const url = baseUrl(server);
-        mkdirSync(join(VAULT_DIR, "somedir"), { recursive: true });
+        mkdirSync(join(TEST_DIR, "somedir"), { recursive: true });
 
-        const res = await fetch(`${url}/api/files/somedir`, {
+        const res = await fetch(`${url}${filePath("somedir")}`, {
             headers: authHeader(),
         });
         expect(res.status).toBe(400);
@@ -229,7 +242,7 @@ describe("Vault file routes", () => {
 
     it("PUT without content field returns 400", async () => {
         const url = baseUrl(server);
-        const res = await fetch(`${url}/api/files/bad.md`, {
+        const res = await fetch(`${url}${filePath("bad.md")}`, {
             method: "PUT",
             headers: authHeader(),
             body: JSON.stringify({ text: "wrong field" }),
@@ -241,37 +254,37 @@ describe("Vault file routes", () => {
 
     it("blocks path traversal via GET", async () => {
         const url = baseUrl(server);
-        const res = await fetch(`${url}/api/files/../../../etc/passwd`, {
+        const res = await fetch(`${url}/api/files/${ROOT_NAME}/../../../etc/passwd`, {
             headers: authHeader(),
         });
         // node:http normalizes the URL path, so ../.. gets collapsed.
-        // The VaultFiles layer provides defense-in-depth.
-        expect([403, 404]).toContain(res.status);
+        // The WorkspaceFiles layer provides defense-in-depth.
+        expect([400, 403, 404]).toContain(res.status);
     });
 
     it("blocks path traversal via PUT", async () => {
         const url = baseUrl(server);
-        const res = await fetch(`${url}/api/files/..%2F..%2Fetc%2Fevil`, {
+        const res = await fetch(`${url}/api/files/${ROOT_NAME}/..%2F..%2Fetc%2Fevil`, {
             method: "PUT",
             headers: authHeader(),
             body: JSON.stringify({ content: "hacked" }),
         });
-        expect([403, 404]).toContain(res.status);
+        expect([400, 403, 404]).toContain(res.status);
     });
 
     // ─── Auth ─────────────────────────────────────────────
 
     it("returns 401 without auth token on file routes", async () => {
         const url = baseUrl(server);
-        writeFileSync(join(VAULT_DIR, "secret.md"), "secret");
+        writeFileSync(join(TEST_DIR, "secret.md"), "secret");
 
-        const res = await fetch(`${url}/api/files/secret.md`);
+        const res = await fetch(`${url}${filePath("secret.md")}`);
         expect(res.status).toBe(401);
     });
 
     it("returns 401 without auth token on file listing", async () => {
         const url = baseUrl(server);
-        const res = await fetch(`${url}/api/files`);
+        const res = await fetch(`${url}/api/files?root=${ROOT_NAME}`);
         expect(res.status).toBe(401);
     });
 
@@ -279,39 +292,39 @@ describe("Vault file routes", () => {
 
     it("POST /api/files/move renames a file", async () => {
         const url = baseUrl(server);
-        writeFileSync(join(VAULT_DIR, "old.md"), "content");
+        writeFileSync(join(TEST_DIR, "old.md"), "content");
 
         const res = await fetch(`${url}/api/files/move`, {
             method: "POST",
             headers: authHeader(),
-            body: JSON.stringify({ from: "old.md", to: "new.md" }),
+            body: JSON.stringify({ root: ROOT_NAME, from: "old.md", to: "new.md" }),
         });
         expect(res.status).toBe(200);
         const body = JSON.parse(res.body);
         expect(body).toEqual({ ok: true, from: "old.md", to: "new.md" });
 
         // Old file gone
-        const oldRes = await fetch(`${url}/api/files/old.md`, { headers: authHeader() });
+        const oldRes = await fetch(`${url}${filePath("old.md")}`, { headers: authHeader() });
         expect(oldRes.status).toBe(404);
 
         // New file exists with same content
-        const newRes = await fetch(`${url}/api/files/new.md`, { headers: authHeader() });
+        const newRes = await fetch(`${url}${filePath("new.md")}`, { headers: authHeader() });
         expect(newRes.status).toBe(200);
         expect(JSON.parse(newRes.body).content).toBe("content");
     });
 
     it("POST /api/files/move creates destination directories", async () => {
         const url = baseUrl(server);
-        writeFileSync(join(VAULT_DIR, "file.md"), "deep move");
+        writeFileSync(join(TEST_DIR, "file.md"), "deep move");
 
         const res = await fetch(`${url}/api/files/move`, {
             method: "POST",
             headers: authHeader(),
-            body: JSON.stringify({ from: "file.md", to: "a/b/c/file.md" }),
+            body: JSON.stringify({ root: ROOT_NAME, from: "file.md", to: "a/b/c/file.md" }),
         });
         expect(res.status).toBe(200);
 
-        const getRes = await fetch(`${url}/api/files/a/b/c/file.md`, { headers: authHeader() });
+        const getRes = await fetch(`${url}${filePath("a/b/c/file.md")}`, { headers: authHeader() });
         expect(getRes.status).toBe(200);
         expect(JSON.parse(getRes.body).content).toBe("deep move");
     });
@@ -321,7 +334,7 @@ describe("Vault file routes", () => {
         const res = await fetch(`${url}/api/files/move`, {
             method: "POST",
             headers: authHeader(),
-            body: JSON.stringify({ from: "ghost.md", to: "dest.md" }),
+            body: JSON.stringify({ root: ROOT_NAME, from: "ghost.md", to: "dest.md" }),
         });
         expect(res.status).toBe(404);
     });
@@ -338,170 +351,110 @@ describe("Vault file routes", () => {
 
     it("POST /api/files/move blocks path traversal", async () => {
         const url = baseUrl(server);
-        writeFileSync(join(VAULT_DIR, "safe.md"), "data");
+        writeFileSync(join(TEST_DIR, "safe.md"), "data");
 
         const res = await fetch(`${url}/api/files/move`, {
             method: "POST",
             headers: authHeader(),
-            body: JSON.stringify({ from: "safe.md", to: "../../etc/evil" }),
+            body: JSON.stringify({ root: ROOT_NAME, from: "safe.md", to: "../../etc/evil" }),
         });
         expect([403, 404]).toContain(res.status);
     });
 
     // ─── Raw file endpoint ────────────────────────────────
 
-    it("GET /api/files/<path>?raw=true returns raw binary with correct content type", async () => {
+    it("GET /api/files/:root/:path?raw=true returns raw binary with correct content type", async () => {
         const url = baseUrl(server);
         // Minimal PNG: 8-byte signature
         const pngBytes = Buffer.from([
             0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
         ]);
-        writeFileSync(join(VAULT_DIR, "image.png"), pngBytes);
+        writeFileSync(join(TEST_DIR, "image.png"), pngBytes);
 
-        const res = await fetch(`${url}/api/files/image.png?raw=true`, {
+        const res = await fetch(`${url}${filePath("image.png")}?raw=true`, {
             headers: authHeader(),
         });
         expect(res.status).toBe(200);
-        // The body comes back as the raw bytes (our test helper reads as string,
-        // but we can check status and that it's not JSON-wrapped)
         expect(res.body).not.toContain('"content"');
     });
 
-    it("GET /api/files/<path>?raw=true returns 404 for missing file", async () => {
+    it("GET /api/files/:root/:path?raw=true returns 404 for missing file", async () => {
         const url = baseUrl(server);
-        const res = await fetch(`${url}/api/files/nope.png?raw=true`, {
+        const res = await fetch(`${url}${filePath("nope.png")}?raw=true`, {
             headers: authHeader(),
         });
         expect(res.status).toBe(404);
     });
 
-    it("GET /api/files/<path>?raw=true returns text files with correct type", async () => {
+    it("GET /api/files/:root/:path?raw=true returns text files with correct type", async () => {
         const url = baseUrl(server);
-        writeFileSync(join(VAULT_DIR, "code.ts"), "const x = 1;");
+        writeFileSync(join(TEST_DIR, "code.ts"), "const x = 1;");
 
-        const res = await fetch(`${url}/api/files/code.ts?raw=true`, {
+        const res = await fetch(`${url}${filePath("code.ts")}?raw=true`, {
             headers: authHeader(),
         });
         expect(res.status).toBe(200);
         expect(res.body).toBe("const x = 1;");
     });
-});
 
-// ─── Git Routes ───────────────────────────────────────────────
+    // ─── Roots endpoint ───────────────────────────────────
 
-describe("Vault git routes", () => {
-    let server: HttpServer;
-
-    beforeEach(async () => {
-        mkdirSync(VAULT_DIR, { recursive: true });
-        execFileSync("git", ["init"], { cwd: VAULT_DIR });
-        execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: VAULT_DIR });
-        execFileSync("git", ["config", "user.name", "Test"], { cwd: VAULT_DIR });
-
-        server = new HttpServer(makeConfig());
-        server.setVault(new VaultFiles(VAULT_DIR), new VaultGit(VAULT_DIR));
-        await server.start();
-    });
-
-    afterEach(async () => {
-        await server.stop();
-        rmSync(VAULT_DIR, { recursive: true, force: true });
-    });
-
-    it("GET /api/git/log returns commit history", async () => {
+    it("GET /api/roots lists configured roots", async () => {
         const url = baseUrl(server);
-        writeFileSync(join(VAULT_DIR, "file.md"), "content");
-        execFileSync("git", ["add", "."], { cwd: VAULT_DIR });
-        execFileSync("git", ["commit", "-m", "Test commit"], { cwd: VAULT_DIR });
-
-        const res = await fetch(`${url}/api/git/log`, {
+        const res = await fetch(`${url}/api/roots`, {
             headers: authHeader(),
         });
         expect(res.status).toBe(200);
         const body = JSON.parse(res.body);
-        expect(body.entries).toHaveLength(1);
-        expect(body.entries[0].message).toBe("Test commit");
-        expect(body.entries[0].hash).toMatch(/^[0-9a-f]+$/);
+        expect(body.roots).toEqual([ROOT_NAME]);
     });
 
-    it("GET /api/git/log?limit=1 respects limit", async () => {
-        const url = baseUrl(server);
-        writeFileSync(join(VAULT_DIR, "a.md"), "a");
-        execFileSync("git", ["add", "."], { cwd: VAULT_DIR });
-        execFileSync("git", ["commit", "-m", "First"], { cwd: VAULT_DIR });
-        writeFileSync(join(VAULT_DIR, "b.md"), "b");
-        execFileSync("git", ["add", "."], { cwd: VAULT_DIR });
-        execFileSync("git", ["commit", "-m", "Second"], { cwd: VAULT_DIR });
+    // ─── Unknown root ─────────────────────────────────────
 
-        const res = await fetch(`${url}/api/git/log?limit=1`, {
+    it("GET with unknown root returns 403", async () => {
+        const url = baseUrl(server);
+        const res = await fetch(`${url}/api/files/nonexistent/file.md`, {
             headers: authHeader(),
         });
-        expect(res.status).toBe(200);
-        const body = JSON.parse(res.body);
-        expect(body.entries).toHaveLength(1);
-        expect(body.entries[0].message).toBe("Second");
+        expect(res.status).toBe(403);
     });
 
-    it("POST /api/git/sync commits changes", async () => {
-        const url = baseUrl(server);
-        // Need an initial commit first
-        writeFileSync(join(VAULT_DIR, "init.md"), "init");
-        execFileSync("git", ["add", "."], { cwd: VAULT_DIR });
-        execFileSync("git", ["commit", "-m", "Initial"], { cwd: VAULT_DIR });
+    // ─── Multi-root isolation ─────────────────────────────
 
-        // Write a new file, then sync
-        writeFileSync(join(VAULT_DIR, "new.md"), "new content");
-
-        const res = await fetch(`${url}/api/git/sync`, {
-            method: "POST",
-            headers: authHeader(),
-            body: JSON.stringify({ message: "Sync via API" }),
-        });
-        expect(res.status).toBe(200);
-        const body = JSON.parse(res.body);
-        expect(body.committed).toBe(true);
-
-        // Verify the commit exists
-        const logRes = await fetch(`${url}/api/git/log?limit=1`, {
-            headers: authHeader(),
-        });
-        const logBody = JSON.parse(logRes.body);
-        expect(logBody.entries[0].message).toBe("Sync via API");
-    });
-
-    it("POST /api/git/sync with nothing to commit", async () => {
-        const url = baseUrl(server);
-        writeFileSync(join(VAULT_DIR, "file.md"), "content");
-        execFileSync("git", ["add", "."], { cwd: VAULT_DIR });
-        execFileSync("git", ["commit", "-m", "Clean"], { cwd: VAULT_DIR });
-
-        const res = await fetch(`${url}/api/git/sync`, {
-            method: "POST",
-            headers: authHeader(),
-        });
-        expect(res.status).toBe(200);
-        const body = JSON.parse(res.body);
-        expect(body.committed).toBe(false);
-    });
-
-    it("GET /api/git/log returns empty array on empty repo", async () => {
+    it("roots are isolated from each other", async () => {
         const url = baseUrl(server);
 
-        const res = await fetch(`${url}/api/git/log`, {
+        // Add a second root
+        const secondDir = join(TEST_DIR, "__second__");
+        mkdirSync(secondDir, { recursive: true });
+        server.setFiles(new WorkspaceFiles({
+            [ROOT_NAME]: TEST_DIR,
+            second: secondDir,
+        }));
+
+        // Write to first root
+        await fetch(`${url}/api/files/${ROOT_NAME}/shared-name.md`, {
+            method: "PUT",
+            headers: authHeader(),
+            body: JSON.stringify({ content: "from first" }),
+        });
+
+        // Write to second root
+        await fetch(`${url}/api/files/second/shared-name.md`, {
+            method: "PUT",
+            headers: authHeader(),
+            body: JSON.stringify({ content: "from second" }),
+        });
+
+        // Read from each — different content
+        const first = await fetch(`${url}/api/files/${ROOT_NAME}/shared-name.md`, {
             headers: authHeader(),
         });
-        expect(res.status).toBe(200);
-        const body = JSON.parse(res.body);
-        expect(body.entries).toEqual([]);
-    });
+        expect(JSON.parse(first.body).content).toBe("from first");
 
-    it("returns 401 without auth on git routes", async () => {
-        const url = baseUrl(server);
-
-        const logRes = await fetch(`${url}/api/git/log`);
-        expect(logRes.status).toBe(401);
-
-        const syncRes = await fetch(`${url}/api/git/sync`, { method: "POST" });
-        expect(syncRes.status).toBe(401);
+        const second = await fetch(`${url}/api/files/second/shared-name.md`, {
+            headers: authHeader(),
+        });
+        expect(JSON.parse(second.body).content).toBe("from second");
     });
 });

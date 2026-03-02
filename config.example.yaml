@@ -29,5 +29,12 @@ security:
 #     token: "env:SERVER_TOKEN"         # Required — Bearer token for API auth
 #     publicDir: /app/public            # Optional — defaults to ./public
 
+# files:
+#     roots:
+#         vault: /path/to/vault        # Named file roots for the workspace browser
+#         sketches: /path/to/sketches  # Add as many as you like
+#         cron: /path/to/cron.d
+
+# Legacy (still works — equivalent to files.roots.vault):
 # vault:
-#     path: /path/to/vault             # Root directory for vault file operations
+#     path: /path/to/vault

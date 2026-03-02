@@ -1,5 +1,6 @@
 node_modules/
 dist/
+public/
 .env
 config.yaml
 matrix-bot.json
@@ -7,4 +8,3 @@ matrix-bot.json
 Dockerfile
 docker-compose.yml
 scripts/entrypoint.sh
-node_modules

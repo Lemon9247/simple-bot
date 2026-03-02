@@ -7,6 +7,7 @@ import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 interface CanvasProps {
     initialData: string;
     filePath: string;
+    fileRoot: string;
     onDirtyChange?: (dirty: boolean) => void;
 }
 
@@ -15,7 +16,7 @@ type SaveStatus = "clean" | "dirty" | "saving" | "saved" | "error";
 /** Debounce delay for auto-save (ms) */
 const SAVE_DEBOUNCE = 2000;
 
-export default function Canvas({ initialData, filePath, onDirtyChange }: CanvasProps) {
+export default function Canvas({ initialData, filePath, fileRoot, onDirtyChange }: CanvasProps) {
     const [saveStatus, setSaveStatus] = useState<SaveStatus>("clean");
     const [excalidrawAPI, setExcalidrawAPI] = useState<ExcalidrawImperativeAPI | null>(null);
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -75,7 +76,7 @@ export default function Canvas({ initialData, filePath, onDirtyChange }: CanvasP
             const files = excalidrawAPI.getFiles();
             const json = serializeAsJSON(elements, appState, files, "local");
 
-            await putFile(filePathRef.current, json);
+            await putFile(fileRoot, filePathRef.current, json);
             if (abortRef.current) return;
             setSaveStatus("saved");
 

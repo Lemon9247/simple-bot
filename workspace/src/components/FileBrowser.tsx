@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback, useRef, type MouseEvent as ReactMouseEvent } from "react";
-import { fetchFiles, putFile, deleteFile, moveFile } from "../api";
+import { fetchFiles, fetchRoots, putFile, deleteFile, moveFile } from "../api";
 import type { VaultFileEntry } from "../api";
 
 interface FileBrowserProps {
     selectedFile: string | null;
-    onFileSelect: (path: string) => void;
-    onFileCreated?: (path: string) => void;
-    onFileDeleted?: (path: string) => void;
+    onFileSelect: (path: string, root: string) => void;
+    onFileCreated?: (path: string, root: string) => void;
+    onFileDeleted?: (path: string, root: string) => void;
 }
 
 function validateFileName(name: string): string | null {
@@ -19,6 +19,8 @@ function validateFileName(name: string): string | null {
 }
 
 export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated, onFileDeleted }: FileBrowserProps) {
+    const [roots, setRoots] = useState<string[]>([]);
+    const [activeRoot, setActiveRoot] = useState<string>("");
     const [entries, setEntries] = useState<VaultFileEntry[]>([]);
     const [search, setSearch] = useState("");
     const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -28,17 +30,30 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
     const contextMenuRef = useRef<HTMLDivElement>(null);
     const createMenuRef = useRef<HTMLDivElement>(null);
 
+    // Load available roots on mount
+    useEffect(() => {
+        fetchRoots()
+            .then((res) => {
+                setRoots(res.roots || []);
+                if (res.roots?.length > 0 && !activeRoot) {
+                    setActiveRoot(res.roots[0]);
+                }
+            })
+            .catch(() => {});
+    }, []);
+
     const loadFiles = useCallback(async (searchQuery?: string) => {
+        if (!activeRoot) return;
         setLoading(true);
         try {
-            const res = await fetchFiles(undefined, searchQuery || undefined);
+            const res = await fetchFiles(activeRoot, undefined, searchQuery || undefined);
             setEntries(res.entries || []);
         } catch {
             // ignore
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [activeRoot]);
 
     useEffect(() => {
         loadFiles();
@@ -100,7 +115,6 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
             return;
         }
 
-        // Ensure appropriate extension
         let filePath: string;
         if (name.includes(".")) {
             filePath = name;
@@ -108,7 +122,6 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
             filePath = type === "excalidraw" ? `${name}.excalidraw` : `${name}.md`;
         }
 
-        // Empty excalidraw document or empty markdown
         const content = filePath.endsWith(".excalidraw")
             ? JSON.stringify({
                 type: "excalidraw",
@@ -124,9 +137,9 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
             : "";
 
         try {
-            await putFile(filePath, content);
+            await putFile(activeRoot, filePath, content);
             await loadFiles(search || undefined);
-            onFileCreated?.(filePath);
+            onFileCreated?.(filePath, activeRoot);
         } catch (err) {
             alert(`Failed to create file: ${err instanceof Error ? err.message : "Unknown error"}`);
         }
@@ -137,9 +150,9 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
         if (!window.confirm(`Delete "${entry.path}"? This cannot be undone.`)) return;
 
         try {
-            await deleteFile(entry.path);
+            await deleteFile(activeRoot, entry.path);
             await loadFiles(search || undefined);
-            onFileDeleted?.(entry.path);
+            onFileDeleted?.(entry.path, activeRoot);
         } catch (err) {
             alert(`Failed to delete: ${err instanceof Error ? err.message : "Unknown error"}`);
         }
@@ -156,20 +169,18 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
             return;
         }
 
-        // Build new path: same directory, new name
         const parts = entry.path.split("/");
         parts[parts.length - 1] = newName;
         const newPath = parts.join("/");
 
         try {
-            await moveFile(entry.path, newPath);
+            await moveFile(activeRoot, entry.path, newPath);
             await loadFiles(search || undefined);
 
-            // If renamed file was selected, select the new path
             if (selectedFile === entry.path) {
-                onFileCreated?.(newPath);
+                onFileCreated?.(newPath, activeRoot);
             }
-            onFileDeleted?.(entry.path);
+            onFileDeleted?.(entry.path, activeRoot);
         } catch (err) {
             alert(`Failed to rename: ${err instanceof Error ? err.message : "Unknown error"}`);
         }
@@ -181,13 +192,13 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
         if (!dest || dest === entry.path) return;
 
         try {
-            await moveFile(entry.path, dest);
+            await moveFile(activeRoot, entry.path, dest);
             await loadFiles(search || undefined);
 
             if (selectedFile === entry.path) {
-                onFileCreated?.(dest);
+                onFileCreated?.(dest, activeRoot);
             }
-            onFileDeleted?.(entry.path);
+            onFileDeleted?.(entry.path, activeRoot);
         } catch (err) {
             alert(`Failed to move: ${err instanceof Error ? err.message : "Unknown error"}`);
         }
@@ -212,7 +223,7 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
                         if (isDir) {
                             toggleDir(entry.path);
                         } else {
-                            onFileSelect(entry.path);
+                            onFileSelect(entry.path, activeRoot);
                         }
                     }}
                     onContextMenu={(e) => handleContextMenu(e, entry)}
@@ -232,6 +243,23 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
     return (
         <>
             <div className="sidebar-header">
+                {roots.length > 1 && (
+                    <div className="root-selector">
+                        {roots.map((root) => (
+                            <button
+                                key={root}
+                                className={`root-tab ${activeRoot === root ? "active" : ""}`}
+                                onClick={() => {
+                                    setActiveRoot(root);
+                                    setExpanded(new Set());
+                                    setSearch("");
+                                }}
+                            >
+                                {root}
+                            </button>
+                        ))}
+                    </div>
+                )}
                 <div className="sidebar-header-row">
                     <input
                         className="sidebar-search"
@@ -281,7 +309,7 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
                         if (!name) return;
                         const validationError = validateFileName(name);
                         if (validationError) { alert(validationError); return; }
-                        putFile(name + "/.gitkeep", "")
+                        putFile(activeRoot, name + "/.gitkeep", "")
                             .then(() => loadFiles(search || undefined))
                             .catch((err) => alert(`Failed to create folder: ${err instanceof Error ? err.message : "Unknown error"}`));
                     }}>

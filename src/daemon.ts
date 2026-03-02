@@ -14,8 +14,7 @@ import * as logger from "./logger.js";
 import { getLogBuffer } from "./logger.js";
 import { cleanupInbox, saveToInbox } from "./inbox.js";
 import { compressImage } from "./image.js";
-import { VaultFiles } from "./vault/files.js";
-import { VaultGit } from "./vault/git.js";
+import { WorkspaceFiles } from "./vault/files.js";
 
 const MAX_MESSAGE_LENGTH = 4000;
 const RATE_WINDOW_MS = 60_000;
@@ -284,12 +283,12 @@ export class Daemon implements DaemonRef, DashboardProvider {
             });
             await this.httpServer.start();
 
-            // Wire vault if configured
-            if (this.config.vault?.path) {
-                const vaultFiles = new VaultFiles(this.config.vault.path);
-                const vaultGit = new VaultGit(this.config.vault.path);
-                this.httpServer.setVault(vaultFiles, vaultGit);
-                logger.info("Vault configured", { path: this.config.vault.path });
+            // Wire file roots if configured
+            const roots = this.resolveFileRoots();
+            if (roots && Object.keys(roots).length > 0) {
+                const workspaceFiles = new WorkspaceFiles(roots);
+                this.httpServer.setFiles(workspaceFiles);
+                logger.info("File roots configured", { roots: Object.keys(roots) });
             }
         }
 
@@ -311,6 +310,13 @@ export class Daemon implements DaemonRef, DashboardProvider {
             await listener.disconnect().catch(() => {});
         }
         await this.sessionManager.stopAll();
+    }
+
+    private resolveFileRoots(): Record<string, string> | null {
+        if (this.config.files?.roots && Object.keys(this.config.files.roots).length > 0) {
+            return this.config.files.roots;
+        }
+        return null;
     }
 
     private parseCommand(text: string): { name: string; args: string } | null {

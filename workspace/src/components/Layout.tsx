@@ -9,6 +9,7 @@ const Canvas = lazy(() => import("./Canvas"));
 
 export default function Layout() {
     const [selectedFile, setSelectedFile] = useState<string | null>(null);
+    const [activeRoot, setActiveRoot] = useState<string>("");
     const [sidebarOpen, setSidebarOpen] = useState(true);
     const [chatOpen, setChatOpen] = useState(true);
     const [mobileOverlay, setMobileOverlay] = useState<"sidebar" | "chat" | null>(null);
@@ -35,7 +36,7 @@ export default function Layout() {
 
     // Load .excalidraw file content when selected
     useEffect(() => {
-        if (!selectedFile || !selectedFile.toLowerCase().endsWith(".excalidraw")) {
+        if (!selectedFile || !selectedFile.toLowerCase().endsWith(".excalidraw") || !activeRoot) {
             setCanvasData(null);
             setCanvasError(null);
             return;
@@ -45,7 +46,7 @@ export default function Layout() {
         setCanvasLoading(true);
         setCanvasError(null);
 
-        fetchFile(selectedFile)
+        fetchFile(activeRoot, selectedFile)
             .then((res) => {
                 if (!cancelled) {
                     setCanvasData(res.content);
@@ -60,20 +61,21 @@ export default function Layout() {
             });
 
         return () => { cancelled = true; };
-    }, [selectedFile]);
+    }, [selectedFile, activeRoot]);
 
     const confirmIfDirty = useCallback((): boolean => {
         if (!dirtyRef.current) return true;
         return window.confirm("You have unsaved changes. Discard?");
     }, []);
 
-    const handleFileSelect = useCallback((path: string) => {
-        if (path === selectedFile) return;
+    const handleFileSelect = useCallback((path: string, root: string) => {
+        if (path === selectedFile && root === activeRoot) return;
         if (!confirmIfDirty()) return;
         dirtyRef.current = false;
         setSelectedFile(path);
+        setActiveRoot(root);
         if (isMobile) setMobileOverlay(null);
-    }, [selectedFile, confirmIfDirty, isMobile]);
+    }, [selectedFile, activeRoot, confirmIfDirty, isMobile]);
 
     const handleBack = useCallback(() => {
         if (!confirmIfDirty()) return;
@@ -92,10 +94,11 @@ export default function Layout() {
         dirtyRef.current = dirty;
     }, []);
 
-    const handleFileCreated = useCallback((path: string) => {
+    const handleFileCreated = useCallback((path: string, root: string) => {
         if (!confirmIfDirty()) return;
         dirtyRef.current = false;
         setSelectedFile(path);
+        setActiveRoot(root);
     }, [confirmIfDirty]);
 
     const handleFileDeleted = useCallback((path: string) => {
@@ -183,6 +186,7 @@ export default function Layout() {
                                     key={selectedFile}
                                     initialData={canvasData}
                                     filePath={selectedFile}
+                                    fileRoot={activeRoot}
                                     onDirtyChange={handleDirtyChange}
                                 />
                             </Suspense>
@@ -192,6 +196,7 @@ export default function Layout() {
                             {selectedFile ? (
                                 <FileViewer
                                     path={selectedFile}
+                                    root={activeRoot}
                                     onBack={handleBack}
                                     onWikiLink={handleWikiLink}
                                     onDirtyChange={handleDirtyChange}
