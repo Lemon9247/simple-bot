@@ -1,0 +1,5 @@
+id: hello-world
+name: Hello World
+version: 1
+entry: main.js
+styles: styles.css
