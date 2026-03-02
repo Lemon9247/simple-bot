@@ -1,38 +1,226 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { getToken } from "../api";
 
+// ─── Block-based message model ────────────────────────────────
+
+type ToolResultContent =
+    | { type: "text"; text: string }
+    | { type: "image"; data: string; mimeType: string };
+
+interface ToolResult {
+    content: ToolResultContent[];
+    isError?: boolean;
+}
+
+type ChatBlock =
+    | { type: "text"; content: string; streaming?: boolean }
+    | {
+        type: "tool_call";
+        toolCallId: string;
+        toolName: string;
+        args?: Record<string, unknown>;
+        result?: ToolResult;
+        status: "running" | "complete" | "error";
+    }
+    | { type: "thinking"; content: string };
+
 interface ChatMessage {
     id: string;
     role: "user" | "agent";
-    content: string;
-    streaming?: boolean;
+    blocks: ChatBlock[];
 }
 
-// Escape HTML entities to prevent XSS
+// ─── Helpers ──────────────────────────────────────────────────
+
 function escapeHtml(text: string): string {
     return text
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
 }
 
-// Minimal inline markdown: bold, italic, code, code blocks
 function renderInlineMarkdown(text: string): string {
     const escaped = escapeHtml(text);
     return escaped
-        // Code blocks
-        .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
-        // Inline code
-        .replace(/`([^`]+)`/g, '<code>$1</code>')
-        // Bold
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        // Italic
-        .replace(/\*(.+?)\*/g, '<em>$1</em>')
-        // Line breaks
-        .replace(/\n/g, '<br/>');
+        .replace(/```(\w*)\n([\s\S]*?)```/g, "<pre><code>$2</code></pre>")
+        .replace(/`([^`]+)`/g, "<code>$1</code>")
+        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+        .replace(/\*(.+?)\*/g, "<em>$1</em>")
+        .replace(/\n/g, "<br/>");
 }
+
+/** Compact JSON summary for tool args — truncate long values */
+function summarizeArgs(args: Record<string, unknown>): string {
+    const entries = Object.entries(args);
+    if (entries.length === 0) return "";
+    const parts = entries.map(([k, v]) => {
+        let val = typeof v === "string" ? v : JSON.stringify(v);
+        if (val && val.length > 80) val = val.slice(0, 77) + "…";
+        return `${k}: ${val}`;
+    });
+    return parts.join(", ");
+}
+
+// ─── Tool Call Block Component ────────────────────────────────
+
+const TEXT_TRUNCATE_LENGTH = 500;
+
+function ToolCallBlock({ block }: { block: Extract<ChatBlock, { type: "tool_call" }> }) {
+    const [expanded, setExpanded] = useState(block.status === "running");
+    const [showFullResult, setShowFullResult] = useState(false);
+
+    // Auto-collapse when tool completes
+    const prevStatus = useRef(block.status);
+    useEffect(() => {
+        if (prevStatus.current === "running" && block.status !== "running") {
+            setExpanded(false);
+        }
+        prevStatus.current = block.status;
+    }, [block.status]);
+
+    const statusClass =
+        block.status === "running" ? "tool-call--running" :
+        block.status === "error" ? "tool-call--error" : "tool-call--complete";
+
+    const statusIcon =
+        block.status === "running" ? "⏳" :
+        block.status === "error" ? "❌" : "✓";
+
+    const argsSummary = block.args ? summarizeArgs(block.args) : "";
+
+    return (
+        <div className={`tool-call ${statusClass}`}>
+            <div
+                className="tool-call-header"
+                onClick={() => setExpanded(!expanded)}
+            >
+                <span className="tool-call-icon">🔧</span>
+                <span className="tool-call-name">{block.toolName}</span>
+                <span className="tool-call-status-icon">{statusIcon}</span>
+                <span className="tool-call-chevron">{expanded ? "▼" : "▶"}</span>
+            </div>
+            {expanded && (
+                <div className="tool-call-body">
+                    {argsSummary && (
+                        <div className="tool-call-args">
+                            <span className="tool-call-args-label">args: </span>
+                            <span>{argsSummary}</span>
+                        </div>
+                    )}
+                    {block.result && (
+                        <div className={`tool-call-result ${block.result.isError ? "tool-call-result--error" : ""}`}>
+                            {block.result.content.map((item, i) => {
+                                if (item.type === "image") {
+                                    return (
+                                        <img
+                                            key={i}
+                                            className="tool-call-image"
+                                            src={`data:${item.mimeType};base64,${item.data}`}
+                                            alt={`Tool result image ${i + 1}`}
+                                        />
+                                    );
+                                }
+                                // Text content
+                                const text = item.text;
+                                const isLong = text.length > TEXT_TRUNCATE_LENGTH;
+                                const displayText = (!showFullResult && isLong)
+                                    ? text.slice(0, TEXT_TRUNCATE_LENGTH) + "…"
+                                    : text;
+                                return (
+                                    <div key={i} className="tool-call-text">
+                                        <span dangerouslySetInnerHTML={{
+                                            __html: renderInlineMarkdown(displayText),
+                                        }} />
+                                        {isLong && (
+                                            <button
+                                                className="tool-call-show-more"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setShowFullResult(!showFullResult);
+                                                }}
+                                            >
+                                                {showFullResult ? "Show less" : "Show more"}
+                                            </button>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                    {block.status === "running" && !block.result && (
+                        <div className="tool-call-running-indicator">Running…</div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ─── Message Block Renderer ───────────────────────────────────
+
+function MessageBlocks({ blocks }: { blocks: ChatBlock[] }) {
+    return (
+        <>
+            {blocks.map((block, i) => {
+                if (block.type === "text") {
+                    return (
+                        <div
+                            key={i}
+                            className="chat-block-text"
+                            dangerouslySetInnerHTML={{
+                                __html: renderInlineMarkdown(block.content),
+                            }}
+                        />
+                    );
+                }
+                if (block.type === "tool_call") {
+                    return <ToolCallBlock key={block.toolCallId} block={block} />;
+                }
+                if (block.type === "thinking") {
+                    return (
+                        <div key={i} className="chat-block-thinking">
+                            <span className="thinking-label">💭 Thinking</span>
+                            <span dangerouslySetInnerHTML={{
+                                __html: renderInlineMarkdown(block.content),
+                            }} />
+                        </div>
+                    );
+                }
+                return null;
+            })}
+        </>
+    );
+}
+
+// ─── Helpers for state updates ────────────────────────────────
+
+/** Get or create the current agent message (last message if agent + has streaming text) */
+function getOrCreateAgentMessage(
+    prev: ChatMessage[],
+    idCounter: React.MutableRefObject<number>,
+): [ChatMessage[], ChatMessage] {
+    const last = prev[prev.length - 1];
+    if (last && last.role === "agent") {
+        // Check if the last block is a streaming text block
+        const lastBlock = last.blocks[last.blocks.length - 1];
+        if (lastBlock && lastBlock.type === "text" && lastBlock.streaming) {
+            return [prev, last];
+        }
+        // Agent message exists but no streaming text — still use it for tool calls
+        return [prev, last];
+    }
+    // Create new agent message
+    const newMsg: ChatMessage = {
+        id: `agent-${idCounter.current++}`,
+        role: "agent",
+        blocks: [],
+    };
+    return [[...prev, newMsg], newMsg];
+}
+
+// ─── Main Chat Component ─────────────────────────────────────
 
 export default function Chat() {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -61,7 +249,6 @@ export default function Chat() {
         wsRef.current = ws;
 
         ws.onopen = () => {
-            // Send auth as first message instead of query param
             ws.send(JSON.stringify({ type: "auth", token }));
         };
 
@@ -69,7 +256,6 @@ export default function Chat() {
             if (!mountedRef.current) return;
             setConnected(false);
             wsRef.current = null;
-            // Reconnect after 3 seconds
             reconnectTimer.current = setTimeout(connect, 3000);
         };
 
@@ -86,7 +272,6 @@ export default function Chat() {
                     return;
                 }
                 if (data.type === "error" && !connected) {
-                    // Auth failed — don't reconnect with same token
                     ws.close();
                     return;
                 }
@@ -113,7 +298,6 @@ export default function Chat() {
         if (data.source && data.source !== "websocket") return;
 
         if (data.type === "agent_start") {
-            // Agent started responding — prepare for streaming
             return;
         }
 
@@ -122,23 +306,34 @@ export default function Chat() {
             if (!delta) return;
 
             if (delta.type === "text_delta" && delta.delta) {
-                // Streaming text delta — append to current agent message
                 setMessages((prev) => {
                     const last = prev[prev.length - 1];
-                    if (last && last.role === "agent" && last.streaming) {
-                        return [
-                            ...prev.slice(0, -1),
-                            { ...last, content: last.content + delta.delta },
-                        ];
+                    if (last && last.role === "agent") {
+                        const lastBlock = last.blocks[last.blocks.length - 1];
+                        if (lastBlock && lastBlock.type === "text" && lastBlock.streaming) {
+                            // Append to existing streaming text block
+                            const updatedBlock = { ...lastBlock, content: lastBlock.content + delta.delta };
+                            const updatedMsg = {
+                                ...last,
+                                blocks: [...last.blocks.slice(0, -1), updatedBlock],
+                            };
+                            return [...prev.slice(0, -1), updatedMsg];
+                        }
+                        // Agent message exists but last block isn't streaming text — add new text block
+                        const newBlock: ChatBlock = { type: "text", content: delta.delta, streaming: true };
+                        const updatedMsg = {
+                            ...last,
+                            blocks: [...last.blocks, newBlock],
+                        };
+                        return [...prev.slice(0, -1), updatedMsg];
                     }
-                    // Start a new streaming message
+                    // No agent message yet — create one with a streaming text block
                     return [
                         ...prev,
                         {
                             id: `agent-${idCounter.current++}`,
-                            role: "agent",
-                            content: delta.delta,
-                            streaming: true,
+                            role: "agent" as const,
+                            blocks: [{ type: "text" as const, content: delta.delta, streaming: true }],
                         },
                     ];
                 });
@@ -146,12 +341,112 @@ export default function Chat() {
             return;
         }
 
-        if (data.type === "agent_end") {
-            // Finalize streaming
+        if (data.type === "tool_execution_start") {
+            const toolCallId = data.toolCallId ?? `tc-${idCounter.current++}`;
+            const toolName = data.toolName ?? "unknown";
+            const args = data.args;
+
             setMessages((prev) => {
                 const last = prev[prev.length - 1];
-                if (last && last.role === "agent" && last.streaming) {
-                    return [...prev.slice(0, -1), { ...last, streaming: false }];
+                if (last && last.role === "agent") {
+                    // Finalize any streaming text block before inserting tool call
+                    const blocks = last.blocks.map((b) =>
+                        b.type === "text" && b.streaming ? { ...b, streaming: false } : b
+                    );
+                    const toolBlock: ChatBlock = {
+                        type: "tool_call",
+                        toolCallId,
+                        toolName,
+                        args,
+                        status: "running",
+                    };
+                    return [
+                        ...prev.slice(0, -1),
+                        { ...last, blocks: [...blocks, toolBlock] },
+                    ];
+                }
+                // No agent message yet — create one with just the tool call
+                const toolBlock: ChatBlock = {
+                    type: "tool_call",
+                    toolCallId,
+                    toolName,
+                    args,
+                    status: "running",
+                };
+                return [
+                    ...prev,
+                    {
+                        id: `agent-${idCounter.current++}`,
+                        role: "agent" as const,
+                        blocks: [toolBlock],
+                    },
+                ];
+            });
+            return;
+        }
+
+        if (data.type === "tool_execution_end") {
+            const toolCallId = data.toolCallId;
+            const isError = data.isError ?? false;
+
+            // Parse result content into our ToolResult format
+            let result: ToolResult | undefined;
+            if (data.result != null) {
+                // result might be a string, an array of content blocks, or an object with content
+                if (typeof data.result === "string") {
+                    result = { content: [{ type: "text", text: data.result }], isError };
+                } else if (Array.isArray(data.result)) {
+                    result = { content: data.result, isError };
+                } else if (data.result.content && Array.isArray(data.result.content)) {
+                    result = { content: data.result.content, isError };
+                } else {
+                    // Fallback: stringify the whole thing
+                    result = { content: [{ type: "text", text: JSON.stringify(data.result, null, 2) }], isError };
+                }
+            }
+
+            setMessages((prev) => {
+                // Find the agent message containing this tool call
+                for (let i = prev.length - 1; i >= 0; i--) {
+                    const msg = prev[i];
+                    if (msg.role !== "agent") continue;
+                    const blockIdx = msg.blocks.findIndex(
+                        (b) => b.type === "tool_call" && b.toolCallId === toolCallId
+                    );
+                    if (blockIdx === -1) continue;
+
+                    const block = msg.blocks[blockIdx] as Extract<ChatBlock, { type: "tool_call" }>;
+                    const updatedBlock: ChatBlock = {
+                        ...block,
+                        result,
+                        status: isError ? "error" : "complete",
+                    };
+                    const updatedBlocks = [...msg.blocks];
+                    updatedBlocks[blockIdx] = updatedBlock;
+                    const updated = [...prev];
+                    updated[i] = { ...msg, blocks: updatedBlocks };
+                    return updated;
+                }
+                return prev;
+            });
+            return;
+        }
+
+        if (data.type === "agent_end") {
+            // Finalize all streaming blocks
+            setMessages((prev) => {
+                const last = prev[prev.length - 1];
+                if (last && last.role === "agent") {
+                    const blocks = last.blocks.map((b) => {
+                        if (b.type === "text" && b.streaming) {
+                            return { ...b, streaming: false };
+                        }
+                        if (b.type === "tool_call" && b.status === "running") {
+                            return { ...b, status: "complete" as const };
+                        }
+                        return b;
+                    });
+                    return [...prev.slice(0, -1), { ...last, blocks }];
                 }
                 return prev;
             });
@@ -159,7 +454,6 @@ export default function Chat() {
         }
 
         if (data.type === "response" && data.id) {
-            // RPC response — ignore (handled by promise in send)
             return;
         }
     };
@@ -170,13 +464,15 @@ export default function Chat() {
 
         const id = `msg-${idCounter.current++}`;
 
-        // Add user message to chat
         setMessages((prev) => [
             ...prev,
-            { id, role: "user", content: text },
+            {
+                id,
+                role: "user",
+                blocks: [{ type: "text", content: text }],
+            },
         ]);
 
-        // Send via WebSocket RPC
         wsRef.current.send(JSON.stringify({
             id,
             type: "prompt",
@@ -207,13 +503,9 @@ export default function Chat() {
                     <div className="empty-state">Send a message to start chatting</div>
                 )}
                 {messages.map((msg) => (
-                    <div
-                        key={msg.id}
-                        className={`chat-msg ${msg.role}`}
-                        dangerouslySetInnerHTML={{
-                            __html: renderInlineMarkdown(msg.content),
-                        }}
-                    />
+                    <div key={msg.id} className={`chat-msg ${msg.role}`}>
+                        <MessageBlocks blocks={msg.blocks} />
+                    </div>
                 ))}
                 <div ref={messagesEndRef} />
             </div>
