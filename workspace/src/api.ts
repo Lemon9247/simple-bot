@@ -171,7 +171,8 @@ export function moveFile(from: string, to: string): Promise<{ ok: boolean; from:
 
 /** Build a URL for the raw file endpoint (for image src, etc.) */
 export function rawFileUrl(path: string): string {
-    return `/api/files/${encodeURIComponent(path)}?raw=true`;
+    const encoded = path.split("/").map(encodeURIComponent).join("/");
+    return `/api/files/${encoded}?raw=true`;
 }
 
 export function fetchGitLog(limit?: number): Promise<{

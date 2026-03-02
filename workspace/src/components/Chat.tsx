@@ -58,10 +58,15 @@ function summarizeArgs(args: Record<string, unknown>): string {
     const parts = entries.map(([k, v]) => {
         let val = typeof v === "string" ? v : JSON.stringify(v);
         if (val && val.length > 80) val = val.slice(0, 77) + "…";
-        return `${k}: ${val}`;
+        return `${escapeHtml(k)}: ${escapeHtml(val)}`;
     });
     return parts.join(", ");
 }
+
+/** Whitelist of safe MIME types for inline image rendering */
+const SAFE_IMAGE_TYPES = new Set([
+    "image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp",
+]);
 
 // ─── Tool Call Block Component ────────────────────────────────
 
@@ -113,11 +118,14 @@ function ToolCallBlock({ block }: { block: Extract<ChatBlock, { type: "tool_call
                         <div className={`tool-call-result ${block.result.isError ? "tool-call-result--error" : ""}`}>
                             {block.result.content.map((item, i) => {
                                 if (item.type === "image") {
+                                    const mimeType = SAFE_IMAGE_TYPES.has(item.mimeType)
+                                        ? item.mimeType
+                                        : "application/octet-stream";
                                     return (
                                         <img
                                             key={i}
                                             className="tool-call-image"
-                                            src={`data:${item.mimeType};base64,${item.data}`}
+                                            src={`data:${mimeType};base64,${item.data}`}
                                             alt={`Tool result image ${i + 1}`}
                                         />
                                     );

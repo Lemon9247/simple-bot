@@ -156,7 +156,7 @@ export class VaultFiles {
         const fullFrom = await this.resolveSafe(fromPath);
         const fullTo = await this.resolveSafe(toPath);
 
-        // Verify source exists
+        // Verify source exists and is not a directory
         try {
             const stat = await lstat(fullFrom);
             if (stat.isDirectory()) {
@@ -170,6 +170,16 @@ export class VaultFiles {
             throw err;
         }
 
+        // Prevent silent overwrite of existing files
+        try {
+            await lstat(fullTo);
+            throw new VaultPathError(`Destination already exists: ${toPath}`);
+        } catch (err) {
+            if (err instanceof VaultPathError) throw err;
+            if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+            // ENOENT is expected — destination doesn't exist yet
+        }
+
         // Create destination parent directories
         await mkdir(dirname(fullTo), { recursive: true });
 
@@ -178,8 +188,18 @@ export class VaultFiles {
             await rename(fullFrom, fullTo);
         } catch (err) {
             if ((err as NodeJS.ErrnoException).code === "EXDEV") {
-                await copyFile(fullFrom, fullTo);
-                await unlink(fullFrom);
+                try {
+                    await copyFile(fullFrom, fullTo);
+                } catch (copyErr) {
+                    throw new VaultPathError(`Failed to copy file: ${(copyErr as Error).message}`);
+                }
+                try {
+                    await unlink(fullFrom);
+                } catch (unlinkErr) {
+                    // Rollback: remove the copy so we don't end up with duplicates
+                    await unlink(fullTo).catch(() => {});
+                    throw new VaultPathError(`Move failed (could not delete source): ${(unlinkErr as Error).message}`);
+                }
             } else {
                 throw err;
             }

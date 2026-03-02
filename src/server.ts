@@ -238,10 +238,16 @@ export class HttpServer {
             if (url.searchParams.get("raw") === "true") {
                 try {
                     const result = await this.vaultFiles!.readFileRaw(filePath);
-                    res.writeHead(200, {
+                    const headers: Record<string, string | number> = {
                         "Content-Type": result.mimeType,
                         "Content-Length": result.buffer.length,
-                    });
+                        "X-Content-Type-Options": "nosniff",
+                    };
+                    // SVGs can contain scripts — restrict with CSP
+                    if (result.mimeType === "image/svg+xml") {
+                        headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'";
+                    }
+                    res.writeHead(200, headers);
                     res.end(result.buffer);
                 } catch (err) {
                     this.handleVaultError(res, err);
