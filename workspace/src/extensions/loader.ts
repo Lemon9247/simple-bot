@@ -1,17 +1,9 @@
 import type { ExtensionRegistry } from "./registry";
 import type { ExtensionManifest } from "./types";
-import { createNestAPI, setNavigateCallback } from "./api";
+import { createNestAPI } from "./api";
 import { getToken } from "../api";
 
-export async function loadExtensions(
-    registry: ExtensionRegistry,
-    onNavigate?: (viewId: string) => void,
-): Promise<void> {
-    // Wire up navigation callback for views.navigate()
-    if (onNavigate) {
-        setNavigateCallback(onNavigate);
-    }
-
+export async function loadExtensions(registry: ExtensionRegistry): Promise<void> {
     let manifests: ExtensionManifest[];
     try {
         const token = getToken();

@@ -73,13 +73,6 @@ export interface NestAPI {
     };
 }
 
-/** Navigate callback — set by the React layer so extensions can trigger view navigation */
-let navigateCallback: ((viewId: string) => void) | null = null;
-
-export function setNavigateCallback(cb: (viewId: string) => void): void {
-    navigateCallback = cb;
-}
-
 export function createNestAPI(registry: ExtensionRegistry, extensionId: string): NestAPI {
     const statePrefix = `nest-ext-${extensionId}-`;
     let styleCounter = 0;
@@ -114,7 +107,7 @@ export function createNestAPI(registry: ExtensionRegistry, extensionId: string):
                 return registry.registerView({ ...config, id: `${extensionId}:${config.id}` });
             },
             navigate(viewId: string) {
-                if (navigateCallback) navigateCallback(viewId);
+                registry.navigate(viewId);
             },
         },
 

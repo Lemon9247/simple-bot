@@ -17,6 +17,7 @@ export class ExtensionRegistry extends EventTarget {
     private actions = new Map<string, FileActionConfig>();
     private _removedPanels = new Set<string>();
     private styles = new Map<string, HTMLStyleElement>();
+    private navigateCallback: ((viewId: string) => void) | null = null;
 
     private emit(): void {
         this.dispatchEvent(new Event("change"));
@@ -114,6 +115,7 @@ export class ExtensionRegistry extends EventTarget {
     }
 
     getFileActions(path: string): FileActionConfig[] {
+        if (!path) return [];
         return [...this.actions.values()].filter(
             (a) => !a.filter || a.filter(path)
         );
@@ -138,6 +140,16 @@ export class ExtensionRegistry extends EventTarget {
                 this.styles.delete(id);
             },
         };
+    }
+
+    // ── Navigation ───────────────────────────────────────────
+
+    setNavigateCallback(cb: (viewId: string) => void): void {
+        this.navigateCallback = cb;
+    }
+
+    navigate(viewId: string): void {
+        if (this.navigateCallback) this.navigateCallback(viewId);
     }
 
     // ── Events ──────────────────────────────────────────────

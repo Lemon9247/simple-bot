@@ -10,7 +10,7 @@ import {
     useExtensionViews,
     useExtensionRegistry,
     ExtensionSlot,
-    setNavigateCallback,
+    loadExtensions,
 } from "../extensions";
 
 const Canvas = lazy(() => import("./Canvas"));
@@ -42,13 +42,22 @@ export default function Layout() {
     const extensionViews = useExtensionViews();
     const registry = useExtensionRegistry();
 
-    // Wire up view navigation for extensions
+    // Wire up view navigation and load extensions after mount.
+    // Setting the callback before loading ensures navigate() works during activate() (H1).
+    const extensionsLoadedRef = useRef(false);
     useEffect(() => {
-        setNavigateCallback((viewId: string) => {
+        if (!registry) return;
+        registry.setNavigateCallback((viewId: string) => {
             setActiveView(viewId);
             setSelectedFile(null);
         });
-    }, []);
+        if (!extensionsLoadedRef.current) {
+            extensionsLoadedRef.current = true;
+            loadExtensions(registry).catch((err) =>
+                console.error("[extensions] Loader error:", err)
+            );
+        }
+    }, [registry]);
 
     // Emit events to extension registry
     useEffect(() => {

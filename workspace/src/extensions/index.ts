@@ -1,5 +1,5 @@
 export { ExtensionRegistry } from "./registry";
-export { createNestAPI, setNavigateCallback } from "./api";
+export { createNestAPI } from "./api";
 export type { NestAPI } from "./api";
 export { loadExtensions } from "./loader";
 export { ExtensionRegistryContext, useExtensionRegistry, useDashboardPanels, useToolbarButtons, useSidebarSections, useFileViewer, useFileActions, useExtensionViews } from "./hooks";

@@ -19,7 +19,13 @@ export function useExtensionRegistry(): ExtensionRegistry | null {
 
 // ── Shared subscription hook ────────────────────────────────
 
-/** Forces a re-render whenever the registry emits "change" */
+/**
+ * Forces a re-render whenever the registry emits "change".
+ *
+ * Note: all hooks share a single "change" event, so adding a toolbar button
+ * will re-render dashboard panels too. Per-category events (e.g. 'dashboard-change')
+ * would fix this but are overkill at current scale.
+ */
 function useRegistryChange(registry: ExtensionRegistry | null): void {
     const [, forceUpdate] = useReducer((x: number) => x + 1, 0);
 

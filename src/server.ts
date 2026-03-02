@@ -45,11 +45,17 @@ const MIME_TYPES: Record<string, string> = {
     ".html": "text/html",
     ".css": "text/css",
     ".js": "application/javascript",
+    ".mjs": "application/javascript",
     ".json": "application/json",
+    ".yaml": "text/yaml",
+    ".yml": "text/yaml",
     ".png": "image/png",
     ".jpg": "image/jpeg",
+    ".gif": "image/gif",
     ".svg": "image/svg+xml",
     ".ico": "image/x-icon",
+    ".woff2": "font/woff2",
+    ".woff": "font/woff",
 };
 
 const WEBHOOK_RATE_WINDOW_MS = 60_000;
@@ -182,8 +188,6 @@ export class HttpServer {
         this.registerExtensionRoutes();
     }
 
-
-
     private registerExtensionRoutes(): void {
         const extDir = this.extensionsConfig!.dir;
 
@@ -250,10 +254,22 @@ export class HttpServer {
                 return;
             }
 
-            // Prevent directory traversal
-            const extRoot = resolve(extDir, extId);
-            const fullPath = resolve(extRoot, normalize(filePath));
+            // Validate extension ID: alphanumeric, hyphens, underscores only (C1/C2)
+            if (!/^[a-zA-Z0-9_-]+$/.test(extId)) {
+                this.json(res, 400, { error: "Invalid extension ID" });
+                return;
+            }
 
+            // Prevent directory traversal via extension ID
+            const resolvedExtDir = resolve(extDir);
+            const extRoot = resolve(resolvedExtDir, extId);
+            if (!extRoot.startsWith(resolvedExtDir + "/")) {
+                this.json(res, 403, { error: "Forbidden" });
+                return;
+            }
+
+            // Prevent directory traversal via file path
+            const fullPath = resolve(extRoot, normalize(filePath));
             if (!fullPath.startsWith(extRoot + "/") && fullPath !== extRoot) {
                 this.json(res, 403, { error: "Forbidden" });
                 return;
@@ -265,22 +281,7 @@ export class HttpServer {
             }
 
             const ext = extname(fullPath);
-            const mimeTypes: Record<string, string> = {
-                ".js": "application/javascript",
-                ".mjs": "application/javascript",
-                ".css": "text/css",
-                ".json": "application/json",
-                ".html": "text/html",
-                ".yaml": "text/yaml",
-                ".yml": "text/yaml",
-                ".svg": "image/svg+xml",
-                ".png": "image/png",
-                ".jpg": "image/jpeg",
-                ".gif": "image/gif",
-                ".woff2": "font/woff2",
-                ".woff": "font/woff",
-            };
-            const contentType = mimeTypes[ext] ?? "application/octet-stream";
+            const contentType = MIME_TYPES[ext] ?? "application/octet-stream";
 
             res.writeHead(200, { "Content-Type": contentType });
             createReadStream(fullPath).pipe(res);
