@@ -175,10 +175,7 @@ export class HttpServer {
         this.registerFileRoutes();
     }
 
-    /** @deprecated Use setFiles instead */
-    setVault(files: WorkspaceFiles): void {
-        this.setFiles(files);
-    }
+
 
     private prefixRoute(method: string, prefix: string, handler: RouteHandler): void {
         this.prefixRoutes.push({ prefix, method, handler });

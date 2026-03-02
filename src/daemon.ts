@@ -312,14 +312,9 @@ export class Daemon implements DaemonRef, DashboardProvider {
         await this.sessionManager.stopAll();
     }
 
-    /** Resolve file roots from config — supports both new `files.roots` and legacy `vault.path` */
     private resolveFileRoots(): Record<string, string> | null {
         if (this.config.files?.roots && Object.keys(this.config.files.roots).length > 0) {
             return this.config.files.roots;
-        }
-        // Legacy fallback: vault.path → single root named "vault"
-        if (this.config.vault?.path) {
-            return { vault: this.config.vault.path };
         }
         return null;
     }

@@ -63,11 +63,7 @@ function validate(config: unknown): asserts config is Config {
             }
         }
     }
-    if (c.vault) {
-        if (!c.vault.path || typeof c.vault.path !== "string") {
-            throw new Error("config: vault.path is required and must be a non-empty string");
-        }
-    }
+
     validateSessions(c);
     validateRouting(c);
 }

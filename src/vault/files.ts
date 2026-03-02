@@ -320,7 +320,7 @@ export class WorkspaceFiles {
 }
 
 // Backward compat — old name still exported
-export const VaultFiles = WorkspaceFiles;
+
 
 export class FilePathError extends Error {
     constructor(message: string) {
@@ -329,15 +329,9 @@ export class FilePathError extends Error {
     }
 }
 
-/** @deprecated Use FilePathError */
-export const VaultPathError = FilePathError;
-
 export class FileNotFoundError extends Error {
     constructor(message: string) {
         super(message);
         this.name = "FileNotFoundError";
     }
 }
-
-/** @deprecated Use FileNotFoundError */
-export const VaultNotFoundError = FileNotFoundError;

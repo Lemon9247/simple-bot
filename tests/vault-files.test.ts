@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { WorkspaceFiles, FilePathError, FileNotFoundError, VaultFiles, VaultPathError, VaultNotFoundError } from "../src/vault/files.js";
+import { WorkspaceFiles, FilePathError, FileNotFoundError } from "../src/vault/files.js";
 
 const TMP_DIR = join(import.meta.dirname!, "__test_vault__");
 const ROOT_NAME = "test";
@@ -20,20 +20,6 @@ describe("WorkspaceFiles", () => {
     });
 
     // ─── Backward compat aliases ──────────────────────────
-
-    describe("backward compatibility", () => {
-        it("VaultFiles is an alias for WorkspaceFiles", () => {
-            expect(VaultFiles).toBe(WorkspaceFiles);
-        });
-
-        it("VaultPathError is an alias for FilePathError", () => {
-            expect(VaultPathError).toBe(FilePathError);
-        });
-
-        it("VaultNotFoundError is an alias for FileNotFoundError", () => {
-            expect(VaultNotFoundError).toBe(FileNotFoundError);
-        });
-    });
 
     // ─── Roots ────────────────────────────────────────────
 
