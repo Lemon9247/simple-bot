@@ -194,32 +194,6 @@ function MessageBlocks({ blocks }: { blocks: ChatBlock[] }) {
     );
 }
 
-// ─── Helpers for state updates ────────────────────────────────
-
-/** Get or create the current agent message (last message if agent + has streaming text) */
-function getOrCreateAgentMessage(
-    prev: ChatMessage[],
-    idCounter: React.MutableRefObject<number>,
-): [ChatMessage[], ChatMessage] {
-    const last = prev[prev.length - 1];
-    if (last && last.role === "agent") {
-        // Check if the last block is a streaming text block
-        const lastBlock = last.blocks[last.blocks.length - 1];
-        if (lastBlock && lastBlock.type === "text" && lastBlock.streaming) {
-            return [prev, last];
-        }
-        // Agent message exists but no streaming text — still use it for tool calls
-        return [prev, last];
-    }
-    // Create new agent message
-    const newMsg: ChatMessage = {
-        id: `agent-${idCounter.current++}`,
-        role: "agent",
-        blocks: [],
-    };
-    return [[...prev, newMsg], newMsg];
-}
-
 // ─── Main Chat Component ─────────────────────────────────────
 
 export default function Chat() {
