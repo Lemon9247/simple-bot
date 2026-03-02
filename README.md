@@ -18,7 +18,7 @@ Your AI agent lives in a markdown vault you can browse, edit, and draw in — fr
 │       ┌──────▼──────┐                  │
 │       │   bridge    │  track origin    │
 │       └──────┬──────┘                  │
-│              │ stdin/stdout (JSON-RPC)  │
+│              │ stdin/stdout (JSON-RPC) │
 │       ┌──────▼──────┐                  │
 │       │  pi (one)   │←──→ vault/       │
 │       └─────────────┘                  │
