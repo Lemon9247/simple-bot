@@ -69,7 +69,7 @@ const AUTH_RATE_MAX = 10;
 const MAX_BODY_SIZE = 1_048_576; // 1MB
 
 const WS_RATE_WINDOW_MS = 60_000;
-const WS_RATE_MAX = 60;
+const WS_RATE_MAX = 120;
 
 type RouteHandler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
 export type WsRpcHandler = (message: { type: string; [key: string]: unknown }, clientId: string) => Promise<any>;
@@ -332,7 +332,7 @@ export class HttpServer {
             try {
                 body = await this.readJsonBody(req);
             } catch (err) {
-                this.handleBodyError(res, err);
+                this.handleBodyError(req, res, err);
                 return;
             }
 
@@ -404,7 +404,7 @@ export class HttpServer {
             try {
                 body = await this.readJsonBody(req);
             } catch (err) {
-                this.handleBodyError(res, err);
+                this.handleBodyError(req, res, err);
                 return;
             }
 
@@ -588,7 +588,7 @@ export class HttpServer {
             try {
                 body = await this.readJsonBody(req);
             } catch (err) {
-                this.handleBodyError(res, err);
+                this.handleBodyError(req, res, err);
                 return;
             }
 
@@ -627,7 +627,7 @@ export class HttpServer {
             try {
                 body = await this.readJsonBody(req);
             } catch (err) {
-                this.handleBodyError(res, err);
+                this.handleBodyError(req, res, err);
                 return;
             }
 
@@ -964,7 +964,7 @@ export class HttpServer {
         createReadStream(resolved).pipe(res);
     }
 
-    private handleBodyError(res: ServerResponse, err: unknown): void {
+    private handleBodyError(req: IncomingMessage, res: ServerResponse, err: unknown): void {
         const msg = err instanceof Error ? err.message : String(err);
         if (msg === "Payload Too Large") {
             this.json(res, 413, { error: "Payload Too Large" });
@@ -973,14 +973,15 @@ export class HttpServer {
         } else {
             this.json(res, 400, { error: "Invalid JSON body" });
         }
+        // Destroy request after sending response to stop data flow
+        req.destroy();
     }
 
     private readJsonBody(req: IncomingMessage): Promise<any> {
         return new Promise((resolve, reject) => {
-            // Validate Content-Type if present
+            // Validate Content-Type if present — caller destroys req after sending response
             const contentType = req.headers["content-type"];
             if (contentType && !contentType.startsWith("application/json")) {
-                req.destroy();
                 reject(new Error("Unsupported Media Type"));
                 return;
             }
@@ -993,7 +994,6 @@ export class HttpServer {
                 size += chunk.length;
                 if (size > MAX_BODY_SIZE) {
                     destroyed = true;
-                    req.destroy();
                     reject(new Error("Payload Too Large"));
                     return;
                 }

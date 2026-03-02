@@ -25,6 +25,13 @@ security:
 #     gracePeriodMs: 5000               # skip jobs if user message within last N ms (default: 5000)
 
 # server:
+#     # Security headers always applied to every response:
+#     #   Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'
+#     #   X-Frame-Options: DENY
+#     #   X-Content-Type-Options: nosniff
+#     #   Referrer-Policy: strict-origin-when-cross-origin
+#     #   Permissions-Policy: camera=(), microphone=(), geolocation=()
+#     # Note: HSTS should be set by your reverse proxy (Caddy/nginx), not here.
 #     port: 8484
 #     token: "env:SERVER_TOKEN"         # Required — Bearer token for API auth
 #     publicDir: /app/public            # Optional — defaults to ./public

@@ -48,6 +48,40 @@ function fetch(
     });
 }
 
+/** Helper: make an HTTP request with a body */
+function fetchWithBody(
+    url: string,
+    body: string,
+    options: { method?: string; headers?: Record<string, string> } = {},
+): Promise<{ status: number; body: string; headers: Record<string, string> }> {
+    return new Promise((resolve, reject) => {
+        const parsed = new URL(url);
+        const req = request(
+            {
+                hostname: parsed.hostname,
+                port: parsed.port,
+                path: parsed.pathname + parsed.search,
+                method: options.method ?? "POST",
+                headers: options.headers ?? {},
+            },
+            (res) => {
+                let data = "";
+                res.on("data", (chunk) => (data += chunk));
+                res.on("end", () =>
+                    resolve({
+                        status: res.statusCode!,
+                        body: data,
+                        headers: res.headers as Record<string, string>,
+                    }),
+                );
+            },
+        );
+        req.on("error", reject);
+        req.write(body);
+        req.end();
+    });
+}
+
 function authHeader(): Record<string, string> {
     return { Authorization: `Bearer ${TEST_TOKEN}` };
 }
@@ -325,5 +359,134 @@ describe("WebSocket upgrade at /attach", () => {
             req.end();
         });
         expect(res.statusCode).toBe(404);
+    });
+});
+
+// ─── Security Hardening (Phase 1) ────────────────────────────
+
+describe("Security hardening (Phase 1)", () => {
+    let server: HttpServer;
+    const tmpPublic = join(import.meta.dirname!, "__test_security_public__");
+
+    beforeEach(async () => {
+        mkdirSync(tmpPublic, { recursive: true });
+        writeFileSync(join(tmpPublic, "index.html"), "<h1>Security Test</h1>");
+        server = new HttpServer(makeConfig({ publicDir: tmpPublic }));
+        await server.start();
+    });
+
+    afterEach(async () => {
+        await server.stop();
+        rmSync(tmpPublic, { recursive: true, force: true });
+    });
+
+    const EXPECTED_HEADERS = {
+        "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'",
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "permissions-policy": "camera=(), microphone=(), geolocation=()",
+    };
+
+    it("security headers present on API response", async () => {
+        const res = await fetch(`${baseUrl(server)}/api/ping`, {
+            headers: authHeader(),
+        });
+        expect(res.status).toBe(200);
+        for (const [header, value] of Object.entries(EXPECTED_HEADERS)) {
+            expect(res.headers[header]).toBe(value);
+        }
+    });
+
+    it("security headers present on static file response", async () => {
+        const res = await fetch(`${baseUrl(server)}/`);
+        expect(res.status).toBe(200);
+        for (const [header, value] of Object.entries(EXPECTED_HEADERS)) {
+            expect(res.headers[header]).toBe(value);
+        }
+    });
+
+    it("body size limit: request under limit succeeds", async () => {
+        // Set up a webhook handler so POST /api/webhook accepts bodies
+        server.setWebhookHandler(async (msg) => ({ ok: true, queued: false }));
+        const smallBody = JSON.stringify({ message: "hello", source: "test" });
+        const res = await fetchWithBody(
+            `${baseUrl(server)}/api/webhook`,
+            smallBody,
+            {
+                headers: {
+                    ...authHeader(),
+                    "Content-Type": "application/json",
+                },
+            },
+        );
+        expect(res.status).toBeLessThan(413);
+    });
+
+    it("body size limit: request over limit returns 413", async () => {
+        server.setWebhookHandler(async (msg) => ({ ok: true, queued: false }));
+        // Create a body larger than 1MB
+        const largeBody = "x".repeat(1_048_577 + 100);
+        const res = await fetchWithBody(
+            `${baseUrl(server)}/api/webhook`,
+            largeBody,
+            {
+                headers: {
+                    ...authHeader(),
+                    "Content-Type": "application/json",
+                },
+            },
+        );
+        expect(res.status).toBe(413);
+    });
+
+    it("content-type validation: wrong type returns 415", async () => {
+        server.setWebhookHandler(async (msg) => ({ ok: true, queued: false }));
+        const res = await fetchWithBody(
+            `${baseUrl(server)}/api/webhook`,
+            "hello",
+            {
+                headers: {
+                    ...authHeader(),
+                    "Content-Type": "text/plain",
+                },
+            },
+        );
+        expect(res.status).toBe(415);
+    });
+
+    it("content-type validation: missing type accepted", async () => {
+        server.setWebhookHandler(async (msg) => ({ ok: true, queued: false }));
+        const body = JSON.stringify({ message: "hello", source: "test" });
+        const res = await fetchWithBody(
+            `${baseUrl(server)}/api/webhook`,
+            body,
+            {
+                headers: authHeader(),
+            },
+        );
+        // Should not be 415 — missing Content-Type is accepted
+        expect(res.status).not.toBe(415);
+    });
+
+    it("timing-safe auth: valid token succeeds", async () => {
+        const res = await fetch(`${baseUrl(server)}/api/ping`, {
+            headers: { Authorization: `Bearer ${TEST_TOKEN}` },
+        });
+        expect(res.status).toBe(200);
+    });
+
+    it("timing-safe auth: wrong token fails", async () => {
+        const res = await fetch(`${baseUrl(server)}/api/ping`, {
+            headers: { Authorization: "Bearer wrong-token-value" },
+        });
+        expect(res.status).toBe(401);
+    });
+
+    it("timing-safe auth: wrong length token fails", async () => {
+        const res = await fetch(`${baseUrl(server)}/api/ping`, {
+            headers: { Authorization: "Bearer x" },
+        });
+        expect(res.status).toBe(401);
     });
 });

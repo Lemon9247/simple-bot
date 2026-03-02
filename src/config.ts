@@ -55,8 +55,13 @@ function validate(config: unknown): asserts config is Config {
         if (c.server.trustProxy !== undefined && typeof c.server.trustProxy !== "boolean") {
             throw new Error("config: server.trustProxy must be a boolean");
         }
-        if (c.server.host !== undefined && typeof c.server.host !== "string") {
-            throw new Error("config: server.host must be a string");
+        if (c.server.host !== undefined) {
+            if (typeof c.server.host !== "string") {
+                throw new Error("config: server.host must be a string");
+            }
+            if (!/^(\d{1,3}\.){3}\d{1,3}$|^[a-zA-Z0-9.-]+$|^\[:[:0-9a-fA-F]+\]$/.test(c.server.host)) {
+                throw new Error("config: server.host must be a valid IP address or hostname");
+            }
         }
     }
     if (c.files) {
