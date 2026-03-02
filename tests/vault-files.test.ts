@@ -212,6 +212,74 @@ describe("VaultFiles", () => {
         });
     });
 
+    // ─── Move ──────────────────────────────────────────────
+
+    describe("moveFile", () => {
+        it("moves a file to a new name", async () => {
+            writeFileSync(join(TMP_DIR, "old.md"), "content");
+            const vault = makeVault();
+            await vault.moveFile("old.md", "new.md");
+            await expect(vault.readFile("old.md")).rejects.toThrow(VaultNotFoundError);
+            const result = await vault.readFile("new.md");
+            expect(result.content).toBe("content");
+        });
+
+        it("moves a file to a subdirectory, creating parents", async () => {
+            writeFileSync(join(TMP_DIR, "file.md"), "deep");
+            const vault = makeVault();
+            await vault.moveFile("file.md", "a/b/c/file.md");
+            const result = await vault.readFile("a/b/c/file.md");
+            expect(result.content).toBe("deep");
+        });
+
+        it("throws VaultNotFoundError for non-existent source", async () => {
+            const vault = makeVault();
+            await expect(vault.moveFile("ghost.md", "dest.md")).rejects.toThrow(VaultNotFoundError);
+        });
+
+        it("rejects path traversal in source", async () => {
+            const vault = makeVault();
+            await expect(vault.moveFile("../../etc/passwd", "dest.md")).rejects.toThrow(VaultPathError);
+        });
+
+        it("rejects path traversal in destination", async () => {
+            writeFileSync(join(TMP_DIR, "safe.md"), "data");
+            const vault = makeVault();
+            await expect(vault.moveFile("safe.md", "../../etc/evil")).rejects.toThrow(VaultPathError);
+        });
+
+        it("rejects moving a directory", async () => {
+            mkdirSync(join(TMP_DIR, "mydir"), { recursive: true });
+            const vault = makeVault();
+            await expect(vault.moveFile("mydir", "otherdir")).rejects.toThrow(VaultPathError);
+        });
+    });
+
+    // ─── Raw Read ─────────────────────────────────────────
+
+    describe("readFileRaw", () => {
+        it("returns raw buffer and mime type for binary files", async () => {
+            const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+            writeFileSync(join(TMP_DIR, "image.png"), pngBytes);
+            const vault = makeVault();
+            const result = await vault.readFileRaw("image.png");
+            expect(result.mimeType).toBe("image/png");
+            expect(Buffer.compare(result.buffer, pngBytes)).toBe(0);
+        });
+
+        it("returns application/octet-stream for unknown extensions", async () => {
+            writeFileSync(join(TMP_DIR, "data.bin"), "binary");
+            const vault = makeVault();
+            const result = await vault.readFileRaw("data.bin");
+            expect(result.mimeType).toBe("application/octet-stream");
+        });
+
+        it("throws VaultNotFoundError for non-existent file", async () => {
+            const vault = makeVault();
+            await expect(vault.readFileRaw("nope.png")).rejects.toThrow(VaultNotFoundError);
+        });
+    });
+
     // ─── Path Traversal Protection ────────────────────────
 
     describe("path traversal protection", () => {
