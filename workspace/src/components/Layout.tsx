@@ -132,7 +132,11 @@ export default function Layout() {
                     >
                         ☰ Files
                     </button>
-                    <h1><span>nest</span></h1>
+                    <h1
+                        className="home-link"
+                        onClick={() => { if (confirmIfDirty()) { dirtyRef.current = false; setSelectedFile(null); } }}
+                        title="Back to dashboard"
+                    ><span>nest</span></h1>
                 </div>
                 <div className="top-bar-right">
                     <button

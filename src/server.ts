@@ -197,11 +197,61 @@ export class HttpServer {
             }
         });
 
+        // Move file
+        this.route("POST", "/api/files/move", async (req, res) => {
+            let body: any;
+            try {
+                body = await this.readJsonBody(req);
+            } catch {
+                this.json(res, 400, { error: "Invalid JSON body" });
+                return;
+            }
+
+            if (!body || typeof body.from !== "string" || typeof body.to !== "string") {
+                this.json(res, 400, { error: "Body must include 'from' and 'to' strings" });
+                return;
+            }
+
+            if (!body.from.trim() || !body.to.trim()) {
+                this.json(res, 400, { error: "Paths cannot be empty" });
+                return;
+            }
+
+            try {
+                await this.vaultFiles!.moveFile(body.from, body.to);
+                this.json(res, 200, { ok: true, from: body.from, to: body.to });
+            } catch (err) {
+                this.handleVaultError(res, err);
+            }
+        });
+
         // Read file (prefix match: everything after /api/files/)
         this.prefixRoute("GET", "/api/files/", async (req, res) => {
             const filePath = this.extractFilePath(req.url ?? "");
             if (!filePath) {
                 this.json(res, 400, { error: "Missing file path" });
+                return;
+            }
+
+            // Raw binary response when ?raw=true
+            const url = new URL(req.url ?? "/", "http://localhost");
+            if (url.searchParams.get("raw") === "true") {
+                try {
+                    const result = await this.vaultFiles!.readFileRaw(filePath);
+                    const headers: Record<string, string | number> = {
+                        "Content-Type": result.mimeType,
+                        "Content-Length": result.buffer.length,
+                        "X-Content-Type-Options": "nosniff",
+                    };
+                    // SVGs can contain scripts — restrict with CSP
+                    if (result.mimeType === "image/svg+xml") {
+                        headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'";
+                    }
+                    res.writeHead(200, headers);
+                    res.end(result.buffer);
+                } catch (err) {
+                    this.handleVaultError(res, err);
+                }
                 return;
             }
 

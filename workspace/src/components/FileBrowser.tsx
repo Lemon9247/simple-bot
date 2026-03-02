@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, type MouseEvent as ReactMouseEvent } from "react";
-import { fetchFiles, putFile, deleteFile, fetchFile } from "../api";
+import { fetchFiles, putFile, deleteFile, moveFile } from "../api";
 import type { VaultFileEntry } from "../api";
 
 interface FileBrowserProps {
@@ -162,26 +162,34 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
         const newPath = parts.join("/");
 
         try {
-            // Copy content to new path, then delete old
-            const file = await fetchFile(entry.path);
-            await putFile(newPath, file.content);
-            try {
-                await deleteFile(entry.path);
-            } catch (deleteErr) {
-                // Rollback: delete the newly created file
-                await deleteFile(newPath).catch(() => {});
-                throw deleteErr;
-            }
+            await moveFile(entry.path, newPath);
             await loadFiles(search || undefined);
 
             // If renamed file was selected, select the new path
             if (selectedFile === entry.path) {
                 onFileCreated?.(newPath);
             }
-            // If renamed file was selected, notify deletion of old
             onFileDeleted?.(entry.path);
         } catch (err) {
             alert(`Failed to rename: ${err instanceof Error ? err.message : "Unknown error"}`);
+        }
+    };
+
+    const handleMoveFile = async (entry: VaultFileEntry) => {
+        setContextMenu(null);
+        const dest = window.prompt("Move to (full path):", entry.path);
+        if (!dest || dest === entry.path) return;
+
+        try {
+            await moveFile(entry.path, dest);
+            await loadFiles(search || undefined);
+
+            if (selectedFile === entry.path) {
+                onFileCreated?.(dest);
+            }
+            onFileDeleted?.(entry.path);
+        } catch (err) {
+            alert(`Failed to move: ${err instanceof Error ? err.message : "Unknown error"}`);
         }
     };
 
@@ -267,6 +275,18 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
                     <button onClick={() => { setCreateMenu(null); handleCreateFile("excalidraw"); }}>
                         🎨 Drawing
                     </button>
+                    <button onClick={() => {
+                        setCreateMenu(null);
+                        const name = window.prompt("Folder name:");
+                        if (!name) return;
+                        const validationError = validateFileName(name);
+                        if (validationError) { alert(validationError); return; }
+                        putFile(name + "/.gitkeep", "")
+                            .then(() => loadFiles(search || undefined))
+                            .catch((err) => alert(`Failed to create folder: ${err instanceof Error ? err.message : "Unknown error"}`));
+                    }}>
+                        📁 Folder
+                    </button>
                 </div>
             )}
 
@@ -279,6 +299,9 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
                 >
                     <button onClick={() => handleRenameFile(contextMenu.entry)}>
                         Rename
+                    </button>
+                    <button onClick={() => handleMoveFile(contextMenu.entry)}>
+                        Move to…
                     </button>
                     <button className="danger" onClick={() => handleDeleteFile(contextMenu.entry)}>
                         Delete

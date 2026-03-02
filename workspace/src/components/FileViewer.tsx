@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from "react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import { fetchFile, putFile, fetchFiles } from "../api";
+import { fetchFile, putFile, fetchFiles, rawFileUrl, getToken } from "../api";
 
 const Editor = lazy(() => import("./Editor"));
 
@@ -13,6 +13,58 @@ const escapeHtml = (str: string) =>
         '"': '&quot;',
         "'": '&#39;'
     }[m]!));
+
+const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]);
+const CODE_EXTENSIONS = new Set([".ts", ".js", ".json", ".yaml", ".yml", ".toml", ".sh", ".css", ".html", ".tsx", ".jsx", ".xml", ".rs", ".py", ".go"]);
+
+function getExtension(path: string): string {
+    const dot = path.lastIndexOf(".");
+    return dot >= 0 ? path.slice(dot).toLowerCase() : "";
+}
+
+function isImageFile(path: string): boolean {
+    return IMAGE_EXTENSIONS.has(getExtension(path));
+}
+
+function isCodeFile(path: string): boolean {
+    return CODE_EXTENSIONS.has(getExtension(path));
+}
+
+function isTextFile(path: string): boolean {
+    const ext = getExtension(path);
+    return ext === ".md" || ext === ".excalidraw" || ext === ".txt" || ext === "" || isCodeFile(path);
+}
+
+/** Fetch a raw file as a blob URL, including auth header */
+function useAuthBlobUrl(path: string, enabled: boolean): string | null {
+    const [blobUrl, setBlobUrl] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!enabled) { setBlobUrl(null); return; }
+        let revoked = false;
+        const token = getToken();
+        fetch(rawFileUrl(path), {
+            headers: { Authorization: `Bearer ${token}` },
+        })
+            .then((res) => {
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                return res.blob();
+            })
+            .then((blob) => {
+                if (revoked) return;
+                setBlobUrl(URL.createObjectURL(blob));
+            })
+            .catch(() => {
+                if (!revoked) setBlobUrl(null);
+            });
+        return () => {
+            revoked = true;
+            setBlobUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null; });
+        };
+    }, [path, enabled]);
+
+    return blobUrl;
+}
 
 interface FileViewerProps {
     path: string;
@@ -36,8 +88,19 @@ export default function FileViewer({ path, onBack, onWikiLink, onDirtyChange }: 
     const saveStatusRef = useRef(saveStatus);
     const handleSaveRef = useRef<() => void>(() => {});
 
-    // Load file content
+    const isImage = isImageFile(path);
+    const imageBlobUrl = useAuthBlobUrl(path, isImage);
+
+    // Load file content (skip for images — they use the raw endpoint)
     useEffect(() => {
+        if (isImage) {
+            setContent(null);
+            setEditedContent(null);
+            setLoading(false);
+            setError(null);
+            return;
+        }
+
         let cancelled = false;
         setLoading(true);
         setError(null);
@@ -61,7 +124,7 @@ export default function FileViewer({ path, onBack, onWikiLink, onDirtyChange }: 
             });
 
         return () => { cancelled = true; };
-    }, [path]);
+    }, [path, isImage]);
 
     // Load file list for wiki-link autocomplete
     useEffect(() => {
@@ -259,8 +322,24 @@ export default function FileViewer({ path, onBack, onWikiLink, onDirtyChange }: 
                     dangerouslySetInnerHTML={{ __html: renderedHtml }}
                     onClick={handleClick}
                 />
-            ) : (
+            ) : isImage ? (
+                <div className="file-viewer-image">
+                    {imageBlobUrl ? (
+                        <img
+                            src={imageBlobUrl}
+                            alt={path.split("/").pop() ?? path}
+                            className="file-viewer-image-img"
+                        />
+                    ) : (
+                        <div className="empty-state">Loading image…</div>
+                    )}
+                </div>
+            ) : isCodeFile(path) ? (
+                <pre className="file-content-pre file-content-code">{content}</pre>
+            ) : isTextFile(path) ? (
                 <pre className="file-content-pre">{content}</pre>
+            ) : (
+                <div className="empty-state">Binary file — cannot preview</div>
             )}
         </div>
     );
