@@ -1,35 +1,38 @@
 # Workspace Extensions
 
-Extensions add custom UI to the nest workspace — dashboard panels, toolbar buttons, sidebar sections, custom file viewers, and more. They're plain JavaScript modules served from a configured directory. No build step, no Docker rebuild, no React knowledge required.
+Extensions add custom UI to the nest workspace — dashboard panels, toolbar buttons, sidebar sections, and more. Each extension runs in a **sandboxed iframe** and communicates with the host via `postMessage`. Extensions cannot access the host page's DOM, cookies, sessionStorage, or auth tokens.
 
 ## Quick Start
 
 1. Create an extension directory:
    ```
-   ~/extensions/my-ext/
+   ~/extensions/hello-world/
    ├── manifest.yaml
-   └── main.js
+   └── panel.js
    ```
 
 2. Add a manifest:
    ```yaml
-   id: my-ext
-   name: My Extension
+   id: hello-world
+   name: Hello World
    version: 1
-   entry: main.js
+   slots:
+       - type: dashboard
+         entry: panel.js
+         defaultHeight: 80
    ```
 
-3. Write your entry point:
+3. Write your entry script:
    ```js
-   export function activate(nest) {
-       nest.dashboard.addPanel({
-           id: "hello",
-           title: "Hello",
-           render(container) {
-               container.innerHTML = "<p>Hello from my extension!</p>";
-           },
-       });
-   }
+   import { nest } from '/nest-sdk.js';
+
+   const div = document.createElement('div');
+   div.style.padding = '1rem';
+   div.innerHTML = '<h3>👋 Hello from an extension!</h3>';
+   document.body.appendChild(div);
+
+   // Tell the host how tall your content is
+   nest.resize(document.body.scrollHeight);
    ```
 
 4. Refresh the workspace page.
@@ -48,182 +51,137 @@ Each subdirectory of `extensions.dir` with a valid `manifest.yaml` is loaded as 
 ## Manifest Format
 
 ```yaml
-id: my-ext          # Unique identifier (used in API paths)
-name: My Extension  # Display name
-version: 1          # Integer version
-entry: main.js      # JS entry point (relative to extension dir)
-styles: styles.css  # Optional CSS file to inject via <link>
+id: my-ext              # Unique identifier (used in API paths)
+name: My Extension      # Display name
+version: 1              # Integer version
+slots:                  # UI slots this extension renders into
+    - type: dashboard   # Where: dashboard, sidebar, toolbar, viewer
+      entry: panel.js   # JS entry point (relative to extension dir)
+      defaultHeight: 150  # Optional initial iframe height in px
+    - type: sidebar
+      entry: sidebar.js
 ```
 
-## API Reference
+An extension can declare multiple slots. Each slot creates its own sandboxed iframe with its own entry script.
 
-Extensions receive a `nest` API object in their `activate()` function:
+### Slot Types
 
-### `nest.dashboard`
+| Type | Where it renders | Notes |
+|------|-----------------|-------|
+| `dashboard` | Dashboard grid, after built-in panels | `defaultHeight` recommended |
+| `sidebar` | Below the file browser in the sidebar | |
+| `toolbar` | Top bar, before the Chat toggle | Keep height small (~32px) |
+| `viewer` | (Future) Custom file viewer | Not yet implemented |
+
+## Extension SDK
+
+Extensions import the SDK from `/nest-sdk.js`. It provides a Promise-based API over `postMessage`:
 
 ```js
-// Add a panel to the dashboard
-const panel = nest.dashboard.addPanel({
-    id: "my-panel",
-    title: "My Panel",
-    order: 25,           // Lower = earlier. Built-in: status=0, sessions=10, cron=20, usage=30, activity=40, logs=50
-    render(container) {
-        container.innerHTML = "<p>Panel content</p>";
-        return () => { /* cleanup */ };
-    },
-});
-panel.dispose(); // Remove the panel
-
-// Hide/show built-in panels
-nest.dashboard.removePanel("logs");
-nest.dashboard.restorePanel("logs");
+import { nest } from '/nest-sdk.js';
 ```
 
-### `nest.toolbar`
+### `nest.fetch(url, init?)`
+
+Proxied fetch through the host. The host adds auth credentials — the extension never sees the token.
 
 ```js
-const btn = nest.toolbar.addButton({
-    id: "my-btn",
-    label: "🔧 Tool",
-    title: "Tooltip text",
-    order: 10,
-    onClick() { /* ... */ },
-});
-btn.dispose();
+const result = await nest.fetch('/api/status');
+// result = { status: 200, ok: true, body: { uptime: 12345, ... } }
 ```
 
-### `nest.sidebar`
+### `nest.readFile(root, path)`
+
+Read a file from a configured file root.
 
 ```js
-const section = nest.sidebar.addSection({
-    id: "my-section",
-    title: "My Section",
-    order: 10,
-    render(container) {
-        container.innerHTML = "<p>Sidebar content</p>";
-        return () => { /* cleanup */ };
-    },
-});
-section.dispose();
+const file = await nest.readFile('vault', 'notes.md');
 ```
 
-### `nest.views`
+### `nest.writeFile(root, path, content)`
+
+Write content to a file.
 
 ```js
-// Register a full-page view
-const view = nest.views.register({
-    id: "my-view",
-    title: "My View",
-    render(container) {
-        container.innerHTML = "<h1>Custom view</h1>";
-        return () => { /* cleanup */ };
-    },
-});
-
-// Navigate to it
-nest.views.navigate("my-ext:my-view");
+await nest.writeFile('vault', 'notes.md', 'Updated content');
 ```
 
-### `nest.files`
+### `nest.state.get(key)` / `nest.state.set(key, value)`
+
+Persistent key-value state, stored by the host on the extension's behalf. Extensions in sandboxed iframes can't access `localStorage` directly.
 
 ```js
-// Custom file viewer for specific extensions
-const viewer = nest.files.registerViewer({
-    id: "cave-viewer",
-    extensions: [".cave", ".map"],
-    // OR: match: (path) => path.endsWith(".cave"),
-    render(container, { content, path, root }) {
-        container.innerHTML = `<pre>${content}</pre>`;
-        return () => { /* cleanup */ };
-    },
-});
+await nest.state.set('lastRun', Date.now());
+const lastRun = await nest.state.get('lastRun');
+```
 
-// Add context menu actions to files
-const action = nest.files.registerAction({
-    id: "analyze",
-    label: "🔍 Analyze",
-    filter: (path) => path.endsWith(".md"),
-    onClick(path, root) {
-        alert(`Analyzing ${path}`);
-    },
+### `nest.on(eventName, callback)`
+
+Listen for events pushed from the host.
+
+```js
+nest.on('fileSelected', ({ path, root }) => {
+    console.log('File selected:', path);
 });
 ```
 
-### `nest.styles`
+### `nest.resize(height)`
+
+Tell the host to resize this extension's iframe to the given height in pixels.
 
 ```js
-// Inject CSS dynamically
-const style = nest.styles.inject(`
-    .my-class { color: var(--green); }
-`);
-style.dispose(); // Remove the CSS
-
-// Read current theme variables
-const theme = nest.styles.getTheme();
-// { "--bg": "#0d1117", "--text": "#e6edf3", ... }
+nest.resize(document.body.scrollHeight);
 ```
 
-### `nest.api`
+### Theme Integration
 
-```js
-// Authenticated fetch (auto-adds Bearer token)
-const res = await nest.api.fetch("/api/status");
-const data = await res.json();
+The host posts CSS custom property values into the iframe on load and on theme changes. The SDK automatically applies them to `document.documentElement`, so you can use them in your CSS:
 
-// File operations
-const file = await nest.api.fetchFile("home", "notes.md");
-await nest.api.saveFile("home", "notes.md", "Updated content");
-```
-
-### `nest.state`
-
-```js
-// Persistent state (localStorage, scoped by extension ID)
-nest.state.set("lastRun", Date.now());
-const lastRun = nest.state.get("lastRun");
-```
-
-### `nest.on()`
-
-```js
-// Listen for events
-const sub = nest.on("fileSelected", ({ path, root }) => {
-    console.log("File selected:", path);
-});
-sub.dispose();
-
-// Available events: fileSelected, viewChanged, extensionsLoaded
-```
-
-## The `render()` Pattern
-
-Extensions get raw DOM containers — use vanilla JS, lit-html, Preact, or any framework:
-
-```js
-render(container) {
-    // container is an HTMLElement — fill it however you want
-    container.innerHTML = "<p>Simple HTML</p>";
-
-    // Optionally return a cleanup function
-    return () => {
-        // Called when the component unmounts
-    };
+```css
+.my-panel {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
 }
 ```
 
-## Built-in Panel IDs
+Available variables: `--bg-primary`, `--bg-secondary`, `--bg-tertiary`, `--text-primary`, `--text-secondary`, `--accent`, `--accent-hover`, `--border`, `--error`, `--success`.
 
-For `dashboard.removePanel()`:
-- `status` — uptime, model, context gauge
-- `sessions` — multi-session status (hidden if single session)
-- `cron` — cron jobs table
-- `usage` — cost and token usage
-- `activity` — recent message activity
-- `logs` — log stream
+## Security Model
+
+Each extension runs in an `<iframe sandbox="allow-scripts">` **without** `allow-same-origin`. This gives the iframe an [opaque origin](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/iframe#sandbox), which means:
+
+- **No access to host DOM** — `window.parent` is inaccessible
+- **No access to cookies** — the extension can't read or set cookies
+- **No access to sessionStorage/localStorage** — opaque origin gets its own empty storage
+- **No access to auth tokens** — API calls are proxied through the host bridge
+
+All communication happens through `postMessage`. The host-side `ExtensionBridge` validates every message and proxies API calls with proper authentication.
+
+### Message Protocol
+
+Extensions don't need to use the raw protocol — the SDK handles it. But for reference:
+
+```
+Extension → Host:
+  { type: "nest", id: "<uuid>", action: "fetch", args: { url: "/api/status" } }
+  { type: "nest-resize", height: 320 }
+
+Host → Extension:
+  { type: "nest-reply", id: "<uuid>", result: { ... } }
+  { type: "nest-reply", id: "<uuid>", error: "..." }
+  { type: "nest-event", name: "fileSelected", detail: { ... } }
+  { type: "nest-theme", vars: { "--bg-primary": "#1e1e2e", ... } }
+```
+
+## Example
+
+See `examples/extensions/hello-world/` for a minimal working extension with a dashboard panel.
 
 ## Tips
 
-- **CSS scoping**: Scope your CSS with a class prefix (e.g., `.ext-myext .panel`) to avoid conflicts with the host UI.
-- **Error isolation**: Each extension loads independently. A broken extension won't crash others.
-- **No build step**: Extensions are served as plain ES modules. Use `import()` for dependencies if needed.
-- **Refresh to reload**: Extensions load at page startup. Edit files, refresh the page.
+- **Extensions own their document.** There's no `render(container)` callback — you write directly to `document.body`. Use vanilla JS, Preact, Lit, or anything that runs in a browser.
+- **No build step required.** Extensions are served as plain ES modules.
+- **Auto-sizing.** Call `nest.resize()` after rendering or when content changes. The host sets `defaultHeight` from the manifest as the initial size.
+- **Error isolation.** Each extension loads in its own iframe. A broken extension can't crash others or the host.
+- **Refresh to reload.** Extensions load at page startup. Edit files, refresh the page.

@@ -1,7 +1,0 @@
-/* Hello World extension — external CSS example */
-/* This file is loaded via <link> from the manifest's styles field */
-
-.ext-panel .hello-panel p:first-child {
-    font-size: 1.1rem;
-    margin-bottom: 0.25rem;
-}

@@ -26,7 +26,7 @@ security:
 
 # server:
 #     # Security headers always applied to every response:
-#     #   Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'
+#     #   Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-src blob: data:
 #     #   X-Frame-Options: DENY
 #     #   X-Content-Type-Options: nosniff
 #     #   Referrer-Policy: strict-origin-when-cross-origin
@@ -46,4 +46,5 @@ security:
 
 # extensions:
 #     dir: /path/to/extensions     # Directory containing extension subdirectories
-                                    # Each subdirectory must have a manifest.yaml
+                                    # Each subdirectory needs a manifest.yaml with slots config
+                                    # Extensions run in sandboxed iframes (see docs/extensions.md)
