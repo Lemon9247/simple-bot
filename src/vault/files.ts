@@ -11,7 +11,7 @@ import {
     copyFile,
 } from "node:fs/promises";
 import { dirname, extname } from "node:path";
-import type { VaultFileEntry } from "../types.js";
+import type { FileEntry } from "../types.js";
 
 const MIME_TYPES: Record<string, string> = {
     ".md": "text/markdown",
@@ -38,42 +38,56 @@ const TEXT_EXTENSIONS = new Set([
     ".excalidraw",
 ]);
 
-export class VaultFiles {
-    private root: string;
+export class WorkspaceFiles {
+    private roots: Map<string, string>;
 
-    constructor(vaultRoot: string) {
-        this.root = resolve(vaultRoot);
+    constructor(roots: Record<string, string>) {
+        this.roots = new Map(
+            Object.entries(roots).map(([name, path]) => [name, resolve(path)])
+        );
     }
 
-    /** Resolve a user-provided path and verify it's inside the vault */
-    private async resolveSafe(userPath: string): Promise<string> {
+    /** Get the list of configured root names */
+    getRootNames(): string[] {
+        return Array.from(this.roots.keys());
+    }
+
+    /** Resolve a root name to its absolute path, or throw */
+    private resolveRoot(rootName: string): string {
+        const root = this.roots.get(rootName);
+        if (!root) {
+            throw new FilePathError(`Unknown root: ${rootName}`);
+        }
+        return root;
+    }
+
+    /** Resolve a user-provided path and verify it's inside the given root */
+    private async resolveSafe(root: string, userPath: string): Promise<string> {
         // Reject paths with .. components before resolution
         const normalized = relative(".", userPath);
         if (normalized.startsWith("..") || normalized.split(sep).includes("..")) {
-            throw new VaultPathError(`Path traversal rejected: ${userPath}`);
+            throw new FilePathError(`Path traversal rejected: ${userPath}`);
         }
 
-        const resolved = resolve(this.root, userPath);
+        const resolved = resolve(root, userPath);
 
-        // Must be within vault root
-        if (!resolved.startsWith(this.root + sep) && resolved !== this.root) {
-            throw new VaultPathError(`Path outside vault: ${userPath}`);
+        // Must be within root
+        if (!resolved.startsWith(root + sep) && resolved !== root) {
+            throw new FilePathError(`Path outside root: ${userPath}`);
         }
 
-        // Check that the real path (following symlinks) stays inside the vault.
-        // Walk up to the nearest existing ancestor to catch symlinked directories.
-        await this.verifyRealPath(resolved, userPath);
+        // Check that the real path (following symlinks) stays inside the root.
+        await this.verifyRealPath(resolved, root, userPath);
 
         return resolved;
     }
 
-    /** Verify that the real filesystem path stays inside the vault */
-    private async verifyRealPath(targetPath: string, userPath: string): Promise<void> {
-        // Try realpath on the target itself first
+    /** Verify that the real filesystem path stays inside the root */
+    private async verifyRealPath(targetPath: string, root: string, userPath: string): Promise<void> {
         try {
             const real = await realpath(targetPath);
-            if (!real.startsWith(this.root + sep) && real !== this.root) {
-                throw new VaultPathError(`Symlink resolves outside vault: ${userPath}`);
+            if (!real.startsWith(root + sep) && real !== root) {
+                throw new FilePathError(`Symlink resolves outside root: ${userPath}`);
             }
             return;
         } catch (err) {
@@ -84,11 +98,11 @@ export class VaultFiles {
 
         // File doesn't exist — check the nearest existing parent
         let parent = dirname(targetPath);
-        while (parent !== this.root && parent.startsWith(this.root)) {
+        while (parent !== root && parent.startsWith(root)) {
             try {
                 const real = await realpath(parent);
-                if (!real.startsWith(this.root + sep) && real !== this.root) {
-                    throw new VaultPathError(`Symlink resolves outside vault: ${userPath}`);
+                if (!real.startsWith(root + sep) && real !== root) {
+                    throw new FilePathError(`Symlink resolves outside root: ${userPath}`);
                 }
                 return;
             } catch (err) {
@@ -100,14 +114,14 @@ export class VaultFiles {
         }
     }
 
-    async readFile(relativePath: string): Promise<{ content: string; mimeType: string; encoding?: string }> {
-        const fullPath = await this.resolveSafe(relativePath);
+    async readFile(rootName: string, relativePath: string): Promise<{ content: string; mimeType: string; encoding?: string }> {
+        const root = this.resolveRoot(rootName);
+        const fullPath = await this.resolveSafe(root, relativePath);
 
         try {
-            // Check if path is a directory before attempting to read
             const stat = await lstat(fullPath);
             if (stat.isDirectory()) {
-                throw new VaultPathError(`Path is a directory, not a file: ${relativePath}`);
+                throw new FilePathError(`Path is a directory, not a file: ${relativePath}`);
             }
 
             const ext = extname(fullPath).toLowerCase();
@@ -122,21 +136,22 @@ export class VaultFiles {
                 return { content: buffer.toString("base64"), mimeType, encoding: "base64" };
             }
         } catch (err) {
-            if (err instanceof VaultPathError) throw err;
+            if (err instanceof FilePathError) throw err;
             if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-                throw new VaultNotFoundError(`File not found: ${relativePath}`);
+                throw new FileNotFoundError(`File not found: ${relativePath}`);
             }
             throw err;
         }
     }
 
-    async readFileRaw(relativePath: string): Promise<{ buffer: Buffer; mimeType: string }> {
-        const fullPath = await this.resolveSafe(relativePath);
+    async readFileRaw(rootName: string, relativePath: string): Promise<{ buffer: Buffer; mimeType: string }> {
+        const root = this.resolveRoot(rootName);
+        const fullPath = await this.resolveSafe(root, relativePath);
 
         try {
             const stat = await lstat(fullPath);
             if (stat.isDirectory()) {
-                throw new VaultPathError(`Path is a directory, not a file: ${relativePath}`);
+                throw new FilePathError(`Path is a directory, not a file: ${relativePath}`);
             }
 
             const ext = extname(fullPath).toLowerCase();
@@ -144,46 +159,42 @@ export class VaultFiles {
             const buffer = await fsReadFile(fullPath);
             return { buffer, mimeType };
         } catch (err) {
-            if (err instanceof VaultPathError) throw err;
+            if (err instanceof FilePathError) throw err;
             if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-                throw new VaultNotFoundError(`File not found: ${relativePath}`);
+                throw new FileNotFoundError(`File not found: ${relativePath}`);
             }
             throw err;
         }
     }
 
-    async moveFile(fromPath: string, toPath: string): Promise<void> {
-        const fullFrom = await this.resolveSafe(fromPath);
-        const fullTo = await this.resolveSafe(toPath);
+    async moveFile(rootName: string, fromPath: string, toPath: string): Promise<void> {
+        const root = this.resolveRoot(rootName);
+        const fullFrom = await this.resolveSafe(root, fromPath);
+        const fullTo = await this.resolveSafe(root, toPath);
 
-        // Verify source exists and is not a directory
         try {
             const stat = await lstat(fullFrom);
             if (stat.isDirectory()) {
-                throw new VaultPathError(`Cannot move a directory: ${fromPath}`);
+                throw new FilePathError(`Cannot move a directory: ${fromPath}`);
             }
         } catch (err) {
-            if (err instanceof VaultPathError) throw err;
+            if (err instanceof FilePathError) throw err;
             if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-                throw new VaultNotFoundError(`File not found: ${fromPath}`);
+                throw new FileNotFoundError(`File not found: ${fromPath}`);
             }
             throw err;
         }
 
-        // Prevent silent overwrite of existing files
         try {
             await lstat(fullTo);
-            throw new VaultPathError(`Destination already exists: ${toPath}`);
+            throw new FilePathError(`Destination already exists: ${toPath}`);
         } catch (err) {
-            if (err instanceof VaultPathError) throw err;
+            if (err instanceof FilePathError) throw err;
             if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-            // ENOENT is expected — destination doesn't exist yet
         }
 
-        // Create destination parent directories
         await mkdir(dirname(fullTo), { recursive: true });
 
-        // Try atomic rename first; fall back to copy+unlink for cross-device
         try {
             await rename(fullFrom, fullTo);
         } catch (err) {
@@ -191,14 +202,13 @@ export class VaultFiles {
                 try {
                     await copyFile(fullFrom, fullTo);
                 } catch (copyErr) {
-                    throw new VaultPathError(`Failed to copy file: ${(copyErr as Error).message}`);
+                    throw new FilePathError(`Failed to copy file: ${(copyErr as Error).message}`);
                 }
                 try {
                     await unlink(fullFrom);
                 } catch (unlinkErr) {
-                    // Rollback: remove the copy so we don't end up with duplicates
                     await unlink(fullTo).catch(() => {});
-                    throw new VaultPathError(`Move failed (could not delete source): ${(unlinkErr as Error).message}`);
+                    throw new FilePathError(`Move failed (could not delete source): ${(unlinkErr as Error).message}`);
                 }
             } else {
                 throw err;
@@ -206,33 +216,35 @@ export class VaultFiles {
         }
     }
 
-    async writeFile(relativePath: string, content: string): Promise<void> {
-        const fullPath = await this.resolveSafe(relativePath);
+    async writeFile(rootName: string, relativePath: string, content: string): Promise<void> {
+        const root = this.resolveRoot(rootName);
+        const fullPath = await this.resolveSafe(root, relativePath);
 
-        // Create parent directories if needed
         await mkdir(dirname(fullPath), { recursive: true });
         await fsWriteFile(fullPath, content, "utf-8");
     }
 
-    async deleteFile(relativePath: string): Promise<void> {
-        const fullPath = await this.resolveSafe(relativePath);
+    async deleteFile(rootName: string, relativePath: string): Promise<void> {
+        const root = this.resolveRoot(rootName);
+        const fullPath = await this.resolveSafe(root, relativePath);
 
         try {
             await unlink(fullPath);
         } catch (err) {
             if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-                throw new VaultNotFoundError(`File not found: ${relativePath}`);
+                throw new FileNotFoundError(`File not found: ${relativePath}`);
             }
             throw err;
         }
     }
 
-    async listFiles(dir?: string, search?: string): Promise<VaultFileEntry[]> {
+    async listFiles(rootName: string, dir?: string, search?: string): Promise<FileEntry[]> {
+        const root = this.resolveRoot(rootName);
         const targetDir = dir
-            ? await this.resolveSafe(dir)
-            : this.root;
+            ? await this.resolveSafe(root, dir)
+            : root;
 
-        const entries = await this.buildTree(targetDir, this.root);
+        const entries = await this.buildTree(targetDir, root);
 
         if (search) {
             return this.filterTree(entries, search.toLowerCase());
@@ -241,13 +253,13 @@ export class VaultFiles {
         return entries;
     }
 
-    private async buildTree(dirPath: string, rootPath: string): Promise<VaultFileEntry[]> {
+    private async buildTree(dirPath: string, rootPath: string): Promise<FileEntry[]> {
         let items: import("node:fs").Dirent[];
         try {
             items = await readdir(dirPath, { withFileTypes: true });
         } catch (err) {
             if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-                throw new VaultNotFoundError(`Directory not found: ${relative(rootPath, dirPath)}`);
+                throw new FileNotFoundError(`Directory not found: ${relative(rootPath, dirPath)}`);
             }
             throw err;
         }
@@ -259,10 +271,9 @@ export class VaultFiles {
             return a.name.localeCompare(b.name);
         });
 
-        const result: VaultFileEntry[] = [];
+        const result: FileEntry[] = [];
 
         for (const item of items) {
-            // Skip hidden files/dirs
             if (item.name.startsWith(".")) continue;
 
             const fullPath = resolve(dirPath, item.name);
@@ -288,8 +299,8 @@ export class VaultFiles {
         return result;
     }
 
-    private filterTree(entries: VaultFileEntry[], search: string): VaultFileEntry[] {
-        const result: VaultFileEntry[] = [];
+    private filterTree(entries: FileEntry[], search: string): FileEntry[] {
+        const result: FileEntry[] = [];
 
         for (const entry of entries) {
             if (entry.type === "dir" && entry.children) {
@@ -308,16 +319,25 @@ export class VaultFiles {
     }
 }
 
-export class VaultPathError extends Error {
+// Backward compat — old name still exported
+export const VaultFiles = WorkspaceFiles;
+
+export class FilePathError extends Error {
     constructor(message: string) {
         super(message);
-        this.name = "VaultPathError";
+        this.name = "FilePathError";
     }
 }
 
-export class VaultNotFoundError extends Error {
+/** @deprecated Use FilePathError */
+export const VaultPathError = FilePathError;
+
+export class FileNotFoundError extends Error {
     constructor(message: string) {
         super(message);
-        this.name = "VaultNotFoundError";
+        this.name = "FileNotFoundError";
     }
 }
+
+/** @deprecated Use FileNotFoundError */
+export const VaultNotFoundError = FileNotFoundError;

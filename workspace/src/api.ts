@@ -128,7 +128,7 @@ export function fetchLogs(): Promise<{
     return apiFetch("/api/logs");
 }
 
-// ─── Vault API ────────────────────────────────────────────────
+// ─── Files API ────────────────────────────────────────────────
 
 export interface VaultFileEntry {
     name: string;
@@ -137,54 +137,47 @@ export interface VaultFileEntry {
     children?: VaultFileEntry[];
 }
 
-export function fetchFiles(dir?: string, search?: string): Promise<{ entries: VaultFileEntry[] }> {
+export function fetchRoots(): Promise<{ roots: string[] }> {
+    return apiFetch("/api/roots");
+}
+
+export function fetchFiles(root: string, dir?: string, search?: string): Promise<{ entries: VaultFileEntry[] }> {
     const params = new URLSearchParams();
+    params.set("root", root);
     if (dir) params.set("dir", dir);
     if (search) params.set("search", search);
-    const qs = params.toString();
-    return apiFetch(`/api/files${qs ? `?${qs}` : ""}`);
+    return apiFetch(`/api/files?${params.toString()}`);
 }
 
-export function fetchFile(path: string): Promise<{ content: string; binary?: boolean }> {
-    return apiFetch(`/api/files/${encodeURIComponent(path)}`);
+export function fetchFile(root: string, path: string): Promise<{ content: string; binary?: boolean }> {
+    const encoded = path.split("/").map(encodeURIComponent).join("/");
+    return apiFetch(`/api/files/${encodeURIComponent(root)}/${encoded}`);
 }
 
-export function putFile(path: string, content: string): Promise<{ ok: boolean; path: string }> {
-    return apiFetch(`/api/files/${encodeURIComponent(path)}`, {
+export function putFile(root: string, path: string, content: string): Promise<{ ok: boolean; path: string }> {
+    const encoded = path.split("/").map(encodeURIComponent).join("/");
+    return apiFetch(`/api/files/${encodeURIComponent(root)}/${encoded}`, {
         method: "PUT",
         body: JSON.stringify({ content }),
     });
 }
 
-export function deleteFile(path: string): Promise<{ ok: boolean; path: string }> {
-    return apiFetch(`/api/files/${encodeURIComponent(path)}`, {
+export function deleteFile(root: string, path: string): Promise<{ ok: boolean; path: string }> {
+    const encoded = path.split("/").map(encodeURIComponent).join("/");
+    return apiFetch(`/api/files/${encodeURIComponent(root)}/${encoded}`, {
         method: "DELETE",
     });
 }
 
-export function moveFile(from: string, to: string): Promise<{ ok: boolean; from: string; to: string }> {
+export function moveFile(root: string, from: string, to: string): Promise<{ ok: boolean; from: string; to: string }> {
     return apiFetch("/api/files/move", {
         method: "POST",
-        body: JSON.stringify({ from, to }),
+        body: JSON.stringify({ root, from, to }),
     });
 }
 
 /** Build a URL for the raw file endpoint (for image src, etc.) */
-export function rawFileUrl(path: string): string {
+export function rawFileUrl(root: string, path: string): string {
     const encoded = path.split("/").map(encodeURIComponent).join("/");
-    return `/api/files/${encoded}?raw=true`;
-}
-
-export function fetchGitLog(limit?: number): Promise<{
-    entries: Array<{ hash: string; author: string; date: string; message: string }>;
-}> {
-    const qs = limit ? `?limit=${limit}` : "";
-    return apiFetch(`/api/git/log${qs}`);
-}
-
-export function postGitSync(message?: string): Promise<{ ok: boolean; committed: boolean; pushed: boolean }> {
-    return apiFetch("/api/git/sync", {
-        method: "POST",
-        body: JSON.stringify(message ? { message } : {}),
-    });
+    return `/api/files/${encodeURIComponent(root)}/${encoded}?raw=true`;
 }

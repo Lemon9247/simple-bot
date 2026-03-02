@@ -87,18 +87,24 @@ export interface RoutingConfig {
     default: string;
 }
 
-// ─── Vault Types ──────────────────────────────────────────────
+// ─── Files Types ──────────────────────────────────────────────
 
-export interface VaultConfig {
-    path: string;
+export interface FilesConfig {
+    roots: Record<string, string>;
 }
 
-export interface VaultFileEntry {
+/** @deprecated Use FilesConfig instead */
+export type VaultConfig = { path: string };
+
+export interface FileEntry {
     name: string;
     path: string;
     type: "file" | "dir";
-    children?: VaultFileEntry[];
+    children?: FileEntry[];
 }
+
+/** @deprecated Use FileEntry instead */
+export type VaultFileEntry = FileEntry;
 
 // ─── Main Config ──────────────────────────────────────────────
 
@@ -124,6 +130,8 @@ export interface Config {
     cron?: CronConfig;
     server?: ServerConfig;
     tracking?: TrackingConfig;
+    files?: FilesConfig;
+    /** @deprecated Use files.roots instead */
     vault?: VaultConfig;
     sessions?: Record<string, SessionConfig>;
     defaultSession?: string;

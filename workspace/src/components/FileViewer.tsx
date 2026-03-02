@@ -36,14 +36,14 @@ function isTextFile(path: string): boolean {
 }
 
 /** Fetch a raw file as a blob URL, including auth header */
-function useAuthBlobUrl(path: string, enabled: boolean): string | null {
+function useAuthBlobUrl(root: string, path: string, enabled: boolean): string | null {
     const [blobUrl, setBlobUrl] = useState<string | null>(null);
 
     useEffect(() => {
         if (!enabled) { setBlobUrl(null); return; }
         let revoked = false;
         const token = getToken();
-        fetch(rawFileUrl(path), {
+        fetch(rawFileUrl(root, path), {
             headers: { Authorization: `Bearer ${token}` },
         })
             .then((res) => {
@@ -61,13 +61,14 @@ function useAuthBlobUrl(path: string, enabled: boolean): string | null {
             revoked = true;
             setBlobUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null; });
         };
-    }, [path, enabled]);
+    }, [root, path, enabled]);
 
     return blobUrl;
 }
 
 interface FileViewerProps {
     path: string;
+    root: string;
     onBack: () => void;
     onWikiLink: (target: string) => void;
     onDirtyChange?: (dirty: boolean) => void;
@@ -75,7 +76,7 @@ interface FileViewerProps {
 
 type SaveStatus = "clean" | "dirty" | "saving" | "saved" | "error";
 
-export default function FileViewer({ path, onBack, onWikiLink, onDirtyChange }: FileViewerProps) {
+export default function FileViewer({ path, root, onBack, onWikiLink, onDirtyChange }: FileViewerProps) {
     const [content, setContent] = useState<string | null>(null);
     const [editedContent, setEditedContent] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
@@ -89,7 +90,7 @@ export default function FileViewer({ path, onBack, onWikiLink, onDirtyChange }: 
     const handleSaveRef = useRef<() => void>(() => {});
 
     const isImage = isImageFile(path);
-    const imageBlobUrl = useAuthBlobUrl(path, isImage);
+    const imageBlobUrl = useAuthBlobUrl(root, path, isImage);
 
     // Load file content (skip for images — they use the raw endpoint)
     useEffect(() => {
@@ -108,7 +109,7 @@ export default function FileViewer({ path, onBack, onWikiLink, onDirtyChange }: 
         setSaveStatus("clean");
         setEditedContent(null);
 
-        fetchFile(path)
+        fetchFile(root, path)
             .then((res) => {
                 if (!cancelled) {
                     setContent(res.content);
@@ -129,7 +130,7 @@ export default function FileViewer({ path, onBack, onWikiLink, onDirtyChange }: 
     // Load file list for wiki-link autocomplete
     useEffect(() => {
         let cancelled = false;
-        fetchFiles()
+        fetchFiles(root)
             .then((res) => {
                 if (!cancelled) {
                     const paths: string[] = [];
@@ -164,7 +165,7 @@ export default function FileViewer({ path, onBack, onWikiLink, onDirtyChange }: 
         if (saveStatus === "saving") return;
         setSaveStatus("saving");
         try {
-            await putFile(path, editedContent);
+            await putFile(root, path, editedContent);
             setContent(editedContent);
             setSaveStatus("saved");
             // Reset "Saved" indicator after 2s

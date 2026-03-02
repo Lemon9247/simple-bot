@@ -53,6 +53,16 @@ function validate(config: unknown): asserts config is Config {
             );
         }
     }
+    if (c.files) {
+        if (!c.files.roots || typeof c.files.roots !== "object" || Array.isArray(c.files.roots)) {
+            throw new Error("config: files.roots must be an object mapping names to paths");
+        }
+        for (const [name, path] of Object.entries(c.files.roots)) {
+            if (typeof path !== "string" || !path) {
+                throw new Error(`config: files.roots.${name} must be a non-empty string`);
+            }
+        }
+    }
     if (c.vault) {
         if (!c.vault.path || typeof c.vault.path !== "string") {
             throw new Error("config: vault.path is required and must be a non-empty string");

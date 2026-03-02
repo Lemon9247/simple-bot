@@ -181,6 +181,35 @@ body {
     border-bottom: 1px solid var(--border);
 }
 
+.root-selector {
+    display: flex;
+    gap: 0.25rem;
+    margin-bottom: 0.35rem;
+    flex-wrap: wrap;
+}
+
+.root-tab {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.root-tab:hover {
+    color: var(--text);
+    border-color: var(--text-dim);
+}
+
+.root-tab.active {
+    background: var(--accent);
+    color: var(--bg);
+    border-color: var(--accent);
+}
+
 .sidebar-header-row {
     display: flex;
     gap: 0.35rem;
