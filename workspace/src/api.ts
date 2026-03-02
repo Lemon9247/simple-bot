@@ -162,6 +162,18 @@ export function deleteFile(path: string): Promise<{ ok: boolean; path: string }>
     });
 }
 
+export function moveFile(from: string, to: string): Promise<{ ok: boolean; from: string; to: string }> {
+    return apiFetch("/api/files/move", {
+        method: "POST",
+        body: JSON.stringify({ from, to }),
+    });
+}
+
+/** Build a URL for the raw file endpoint (for image src, etc.) */
+export function rawFileUrl(path: string): string {
+    return `/api/files/${encodeURIComponent(path)}?raw=true`;
+}
+
 export function fetchGitLog(limit?: number): Promise<{
     entries: Array<{ hash: string; author: string; date: string; message: string }>;
 }> {
