@@ -1078,3 +1078,30 @@ body {
     font-weight: 500;
     margin-right: 0.25rem;
 }
+
+/* ─── Image Viewer ──────────────────────────────────────── */
+
+.file-viewer-image {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    padding: 1rem;
+    overflow: auto;
+    background: var(--bg);
+}
+
+.file-viewer-image-img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+}
+
+/* ─── Code file styling ─────────────────────────────────── */
+
+.file-content-code {
+    tab-size: 4;
+    -moz-tab-size: 4;
+}

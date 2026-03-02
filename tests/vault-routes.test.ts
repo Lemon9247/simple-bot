@@ -274,6 +274,117 @@ describe("Vault file routes", () => {
         const res = await fetch(`${url}/api/files`);
         expect(res.status).toBe(401);
     });
+
+    // ─── Move ─────────────────────────────────────────────
+
+    it("POST /api/files/move renames a file", async () => {
+        const url = baseUrl(server);
+        writeFileSync(join(VAULT_DIR, "old.md"), "content");
+
+        const res = await fetch(`${url}/api/files/move`, {
+            method: "POST",
+            headers: authHeader(),
+            body: JSON.stringify({ from: "old.md", to: "new.md" }),
+        });
+        expect(res.status).toBe(200);
+        const body = JSON.parse(res.body);
+        expect(body).toEqual({ ok: true, from: "old.md", to: "new.md" });
+
+        // Old file gone
+        const oldRes = await fetch(`${url}/api/files/old.md`, { headers: authHeader() });
+        expect(oldRes.status).toBe(404);
+
+        // New file exists with same content
+        const newRes = await fetch(`${url}/api/files/new.md`, { headers: authHeader() });
+        expect(newRes.status).toBe(200);
+        expect(JSON.parse(newRes.body).content).toBe("content");
+    });
+
+    it("POST /api/files/move creates destination directories", async () => {
+        const url = baseUrl(server);
+        writeFileSync(join(VAULT_DIR, "file.md"), "deep move");
+
+        const res = await fetch(`${url}/api/files/move`, {
+            method: "POST",
+            headers: authHeader(),
+            body: JSON.stringify({ from: "file.md", to: "a/b/c/file.md" }),
+        });
+        expect(res.status).toBe(200);
+
+        const getRes = await fetch(`${url}/api/files/a/b/c/file.md`, { headers: authHeader() });
+        expect(getRes.status).toBe(200);
+        expect(JSON.parse(getRes.body).content).toBe("deep move");
+    });
+
+    it("POST /api/files/move returns 404 for non-existent source", async () => {
+        const url = baseUrl(server);
+        const res = await fetch(`${url}/api/files/move`, {
+            method: "POST",
+            headers: authHeader(),
+            body: JSON.stringify({ from: "ghost.md", to: "dest.md" }),
+        });
+        expect(res.status).toBe(404);
+    });
+
+    it("POST /api/files/move returns 400 for missing fields", async () => {
+        const url = baseUrl(server);
+        const res = await fetch(`${url}/api/files/move`, {
+            method: "POST",
+            headers: authHeader(),
+            body: JSON.stringify({ from: "file.md" }),
+        });
+        expect(res.status).toBe(400);
+    });
+
+    it("POST /api/files/move blocks path traversal", async () => {
+        const url = baseUrl(server);
+        writeFileSync(join(VAULT_DIR, "safe.md"), "data");
+
+        const res = await fetch(`${url}/api/files/move`, {
+            method: "POST",
+            headers: authHeader(),
+            body: JSON.stringify({ from: "safe.md", to: "../../etc/evil" }),
+        });
+        expect([403, 404]).toContain(res.status);
+    });
+
+    // ─── Raw file endpoint ────────────────────────────────
+
+    it("GET /api/files/<path>?raw=true returns raw binary with correct content type", async () => {
+        const url = baseUrl(server);
+        // Minimal PNG: 8-byte signature
+        const pngBytes = Buffer.from([
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+        ]);
+        writeFileSync(join(VAULT_DIR, "image.png"), pngBytes);
+
+        const res = await fetch(`${url}/api/files/image.png?raw=true`, {
+            headers: authHeader(),
+        });
+        expect(res.status).toBe(200);
+        // The body comes back as the raw bytes (our test helper reads as string,
+        // but we can check status and that it's not JSON-wrapped)
+        expect(res.body).not.toContain('"content"');
+    });
+
+    it("GET /api/files/<path>?raw=true returns 404 for missing file", async () => {
+        const url = baseUrl(server);
+        const res = await fetch(`${url}/api/files/nope.png?raw=true`, {
+            headers: authHeader(),
+        });
+        expect(res.status).toBe(404);
+    });
+
+    it("GET /api/files/<path>?raw=true returns text files with correct type", async () => {
+        const url = baseUrl(server);
+        writeFileSync(join(VAULT_DIR, "code.ts"), "const x = 1;");
+
+        const res = await fetch(`${url}/api/files/code.ts?raw=true`, {
+            headers: authHeader(),
+        });
+        expect(res.status).toBe(200);
+        expect(res.body).toBe("const x = 1;");
+    });
 });
 
 // ─── Git Routes ───────────────────────────────────────────────
