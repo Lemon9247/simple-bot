@@ -35,6 +35,10 @@ security:
 #         sketches: /path/to/sketches  # Add as many as you like
 #         cron: /path/to/cron.d
 
+# extensions:
+#     dir: /path/to/extensions     # Directory containing extension subdirectories
+                                    # Each subdirectory must have a manifest.yaml
+
 # Legacy (still works — equivalent to files.roots.vault):
 # vault:
 #     path: /path/to/vault

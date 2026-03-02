@@ -100,6 +100,20 @@ export interface FileEntry {
     children?: FileEntry[];
 }
 
+// ─── Extensions Types ─────────────────────────────────────────
+
+export interface ExtensionsConfig {
+    dir: string;
+}
+
+export interface ExtensionManifest {
+    id: string;
+    name: string;
+    version: number;
+    entry: string;
+    styles?: string;
+}
+
 // ─── Main Config ──────────────────────────────────────────────
 
 export interface Config {
@@ -125,6 +139,7 @@ export interface Config {
     server?: ServerConfig;
     tracking?: TrackingConfig;
     files?: FilesConfig;
+    extensions?: ExtensionsConfig;
     sessions?: Record<string, SessionConfig>;
     defaultSession?: string;
     routing?: RoutingConfig;

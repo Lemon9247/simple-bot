@@ -1,10 +1,11 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
-import { createReadStream, existsSync, statSync } from "node:fs";
-import { join, extname, resolve } from "node:path";
+import { createReadStream, existsSync, statSync, readdirSync, readFileSync } from "node:fs";
+import { join, extname, resolve, normalize } from "node:path";
 import { createHash } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import { writeFileSync } from "node:fs";
-import type { ServerConfig, WebhookHandler, ActivityEntry } from "./types.js";
+import yaml from "js-yaml";
+import type { ServerConfig, WebhookHandler, ActivityEntry, ExtensionsConfig, ExtensionManifest } from "./types.js";
 import type { ConfigWatcher } from "./config-watcher.js";
 import type { WorkspaceFiles } from "./vault/files.js";
 import { FilePathError, FileNotFoundError } from "./vault/files.js";
@@ -79,6 +80,7 @@ export class HttpServer {
     private wsClientCounter = 0;
     private wsHandler?: WsRpcHandler;
     private workspaceFiles?: WorkspaceFiles;
+    private extensionsConfig?: ExtensionsConfig;
     private prefixRoutes: Array<{ prefix: string; method: string; handler: RouteHandler }> = [];
 
     constructor(config: ServerConfig, dashboard?: DashboardProvider) {
@@ -175,7 +177,115 @@ export class HttpServer {
         this.registerFileRoutes();
     }
 
+    setExtensions(config: ExtensionsConfig): void {
+        this.extensionsConfig = config;
+        this.registerExtensionRoutes();
+    }
 
+
+
+    private registerExtensionRoutes(): void {
+        const extDir = this.extensionsConfig!.dir;
+
+        // GET /api/extensions — list all extensions
+        this.route("GET", "/api/extensions", async (_req, res) => {
+            const dir = resolve(extDir);
+            if (!existsSync(dir) || !statSync(dir).isDirectory()) {
+                this.json(res, 200, { extensions: [] });
+                return;
+            }
+
+            const extensions: ExtensionManifest[] = [];
+            try {
+                const entries = readdirSync(dir, { withFileTypes: true });
+                for (const entry of entries) {
+                    if (!entry.isDirectory()) continue;
+                    const manifestPath = join(dir, entry.name, "manifest.yaml");
+                    if (!existsSync(manifestPath)) continue;
+                    try {
+                        const raw = readFileSync(manifestPath, "utf-8");
+                        const manifest = yaml.load(raw) as ExtensionManifest;
+                        if (manifest && manifest.id && manifest.name && manifest.entry) {
+                            extensions.push({
+                                id: manifest.id,
+                                name: manifest.name,
+                                version: manifest.version ?? 1,
+                                entry: manifest.entry,
+                                ...(manifest.styles ? { styles: manifest.styles } : {}),
+                            });
+                        }
+                    } catch {
+                        // Skip extensions with invalid manifests
+                    }
+                }
+            } catch (err) {
+                logger.error("Failed to scan extensions directory", { error: String(err) });
+            }
+
+            this.json(res, 200, { extensions });
+        });
+
+        // GET /api/extensions/:id/* — serve extension files
+        this.prefixRoute("GET", "/api/extensions/", async (req, res) => {
+            const url = new URL(req.url ?? "/", "http://localhost");
+            const prefix = "/api/extensions/";
+            const rest = decodeURIComponent(url.pathname.slice(prefix.length));
+            if (!rest) {
+                // This is the list endpoint, already handled by exact route
+                this.json(res, 404, { error: "Not Found" });
+                return;
+            }
+
+            const slashIdx = rest.indexOf("/");
+            if (slashIdx === -1) {
+                this.json(res, 400, { error: "Missing file path" });
+                return;
+            }
+
+            const extId = rest.slice(0, slashIdx);
+            const filePath = rest.slice(slashIdx + 1);
+
+            if (!extId || !filePath) {
+                this.json(res, 400, { error: "Missing extension ID or file path" });
+                return;
+            }
+
+            // Prevent directory traversal
+            const extRoot = resolve(extDir, extId);
+            const fullPath = resolve(extRoot, normalize(filePath));
+
+            if (!fullPath.startsWith(extRoot + "/") && fullPath !== extRoot) {
+                this.json(res, 403, { error: "Forbidden" });
+                return;
+            }
+
+            if (!existsSync(fullPath) || !statSync(fullPath).isFile()) {
+                this.json(res, 404, { error: "Not Found" });
+                return;
+            }
+
+            const ext = extname(fullPath);
+            const mimeTypes: Record<string, string> = {
+                ".js": "application/javascript",
+                ".mjs": "application/javascript",
+                ".css": "text/css",
+                ".json": "application/json",
+                ".html": "text/html",
+                ".yaml": "text/yaml",
+                ".yml": "text/yaml",
+                ".svg": "image/svg+xml",
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".gif": "image/gif",
+                ".woff2": "font/woff2",
+                ".woff": "font/woff",
+            };
+            const contentType = mimeTypes[ext] ?? "application/octet-stream";
+
+            res.writeHead(200, { "Content-Type": contentType });
+            createReadStream(fullPath).pipe(res);
+        });
+    }
 
     private prefixRoute(method: string, prefix: string, handler: RouteHandler): void {
         this.prefixRoutes.push({ prefix, method, handler });

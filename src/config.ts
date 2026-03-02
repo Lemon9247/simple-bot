@@ -64,6 +64,12 @@ function validate(config: unknown): asserts config is Config {
         }
     }
 
+    if (c.extensions) {
+        if (!c.extensions.dir || typeof c.extensions.dir !== "string") {
+            throw new Error("config: extensions.dir is required and must be a string");
+        }
+    }
+
     validateSessions(c);
     validateRouting(c);
 }
