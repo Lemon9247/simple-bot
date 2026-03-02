@@ -125,6 +125,15 @@ body {
     font-weight: 600;
 }
 
+.top-bar h1.home-link {
+    cursor: pointer;
+    user-select: none;
+}
+
+.top-bar h1.home-link:hover span {
+    text-decoration: underline;
+}
+
 .top-bar h1 span { color: var(--accent); }
 
 .top-bar-right {
