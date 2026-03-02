@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } fro
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { fetchFile, putFile, fetchFiles, rawFileUrl, getToken } from "../api";
+import { useFileViewer as useExtFileViewer, ExtensionSlot } from "../extensions";
 
 const Editor = lazy(() => import("./Editor"));
 
@@ -91,6 +92,7 @@ export default function FileViewer({ path, root, onBack, onWikiLink, onDirtyChan
 
     const isImage = isImageFile(path);
     const imageBlobUrl = useAuthBlobUrl(root, path, isImage);
+    const customViewer = useExtFileViewer(path);
 
     // Load file content (skip for images — they use the raw endpoint)
     useEffect(() => {
@@ -305,7 +307,11 @@ export default function FileViewer({ path, root, onBack, onWikiLink, onDirtyChan
                     )}
                 </div>
             </div>
-            {editMode && isMarkdown ? (
+            {customViewer && content !== null ? (
+                <ExtensionSlot
+                    render={(container) => customViewer.render(container, { content: content ?? "", path, root })}
+                />
+            ) : editMode && isMarkdown ? (
                 <div className="editor-container">
                     <Suspense fallback={<div className="empty-state">Loading editor…</div>}>
                         <Editor

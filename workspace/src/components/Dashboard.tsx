@@ -1,10 +1,21 @@
 import { useState, useEffect, useRef } from "react";
 import { fetchStatus, fetchSessions, fetchCron, fetchUsage, fetchActivity, fetchLogs } from "../api";
 import type { SessionInfo } from "../api";
+import { useDashboardPanels, ExtensionSlot } from "../extensions";
 
 const CONTEXT_WINDOW = 200000;
 const REFRESH_FAST = 5000;
 const REFRESH_SLOW = 15000;
+
+// Built-in panel IDs and their default orders
+const BUILTIN_PANELS: Record<string, number> = {
+    status: 0,
+    sessions: 10,
+    cron: 20,
+    usage: 30,
+    activity: 40,
+    logs: 50,
+};
 
 // ─── Helpers (same as existing dashboard) ─────────────────────
 
@@ -52,6 +63,9 @@ export default function Dashboard() {
     const [activity, setActivity] = useState<any[]>([]);
     const [logs, setLogs] = useState<any[]>([]);
     const logRef = useRef<HTMLDivElement>(null);
+
+    // Extension panels
+    const { panels: extPanels, removedPanels } = useDashboardPanels();
 
     // Consolidated polling: fast (5s) for activity+sessions, slow (15s) for the rest
     useEffect(() => {
@@ -103,11 +117,13 @@ export default function Dashboard() {
     const ctx = status?.contextSize || usage?.contextSize || 0;
     const ctxPct = Math.min(100, Math.round((ctx / CONTEXT_WINDOW) * 100));
 
-    return (
-        <div className="dashboard-grid">
-            {/* Sessions Panel — hidden if single session */}
-            {sessions.length > 1 && (
-                <div className="panel">
+    // Build a unified panel list: built-in + extension, sorted by order, filtered by removedPanels
+    type PanelEntry = { id: string; order: number; type: "builtin" | "extension"; render?: () => React.ReactNode };
+
+    const builtinPanelRenderers: Record<string, () => React.ReactNode> = {
+        sessions: () => (
+            sessions.length > 1 ? (
+                <div className="panel" key="sessions">
                     <h2>Sessions</h2>
                     {sessions.map((s) => {
                         const stateClass = ["running", "idle", "starting", "stopping", "error"].includes(s.state)
@@ -124,10 +140,10 @@ export default function Dashboard() {
                         );
                     })}
                 </div>
-            )}
-
-            {/* Status Panel */}
-            <div className="panel">
+            ) : null
+        ),
+        status: () => (
+            <div className="panel" key="status">
                 <h2>Status</h2>
                 <div className="stat-row">
                     <span className="stat-label">Uptime</span>
@@ -158,9 +174,9 @@ export default function Dashboard() {
                     </div>
                 </div>
             </div>
-
-            {/* Cron Panel */}
-            <div className="panel">
+        ),
+        cron: () => (
+            <div className="panel" key="cron">
                 <h2>Cron Jobs</h2>
                 {cronJobs.length === 0 ? (
                     <div className="empty-state">No cron jobs</div>
@@ -189,9 +205,9 @@ export default function Dashboard() {
                     </table>
                 )}
             </div>
-
-            {/* Usage Panel */}
-            <div className="panel">
+        ),
+        usage: () => (
+            <div className="panel" key="usage">
                 <h2>Usage</h2>
                 <div className="usage-grid">
                     <div className="usage-card">
@@ -214,9 +230,9 @@ export default function Dashboard() {
                     </div>
                 </div>
             </div>
-
-            {/* Activity Panel */}
-            <div className="panel">
+        ),
+        activity: () => (
+            <div className="panel" key="activity">
                 <h2>Recent Activity</h2>
                 <div className="activity-list">
                     {activity.length === 0 ? (
@@ -233,9 +249,9 @@ export default function Dashboard() {
                     )}
                 </div>
             </div>
-
-            {/* Logs Panel */}
-            <div className="panel log-panel">
+        ),
+        logs: () => (
+            <div className="panel log-panel" key="logs">
                 <h2>Logs</h2>
                 <div className="log-container" ref={logRef}>
                     {logs.length === 0 ? (
@@ -260,6 +276,42 @@ export default function Dashboard() {
                     )}
                 </div>
             </div>
+        ),
+    };
+
+    // Build sorted panel list
+    const allPanels: PanelEntry[] = [];
+
+    for (const [id, order] of Object.entries(BUILTIN_PANELS)) {
+        if (!removedPanels.has(id)) {
+            allPanels.push({ id, order, type: "builtin", render: builtinPanelRenderers[id] });
+        }
+    }
+
+    for (const panel of extPanels) {
+        if (!removedPanels.has(panel.id)) {
+            allPanels.push({ id: panel.id, order: panel.order ?? 100, type: "extension" });
+        }
+    }
+
+    allPanels.sort((a, b) => a.order - b.order);
+
+    return (
+        <div className="dashboard-grid">
+            {allPanels.map((entry) => {
+                if (entry.type === "builtin" && entry.render) {
+                    return entry.render();
+                }
+                // Extension panel
+                const extPanel = extPanels.find((p) => p.id === entry.id);
+                if (!extPanel) return null;
+                return (
+                    <div className="panel ext-panel" key={entry.id}>
+                        <h2>{extPanel.title}</h2>
+                        <ExtensionSlot render={extPanel.render} />
+                    </div>
+                );
+            })}
         </div>
     );
 }

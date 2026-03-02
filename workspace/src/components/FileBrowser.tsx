@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, type MouseEvent as ReactMouseEvent } from "react";
 import { fetchFiles, fetchRoots, putFile, deleteFile, moveFile } from "../api";
 import type { VaultFileEntry } from "../api";
+import { useFileActions } from "../extensions";
 
 interface FileBrowserProps {
     selectedFile: string | null;
@@ -29,6 +30,7 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
     const [createMenu, setCreateMenu] = useState<{ x: number; y: number } | null>(null);
     const contextMenuRef = useRef<HTMLDivElement>(null);
     const createMenuRef = useRef<HTMLDivElement>(null);
+    const extFileActions = useFileActions(contextMenu?.entry?.path ?? "");
 
     // Load available roots on mount
     useEffect(() => {
@@ -334,6 +336,23 @@ export default function FileBrowser({ selectedFile, onFileSelect, onFileCreated,
                     <button className="danger" onClick={() => handleDeleteFile(contextMenu.entry)}>
                         Delete
                     </button>
+                    {extFileActions.length > 0 && (
+                        <>
+                            <div className="context-menu-separator" />
+                            {extFileActions.map((action) => (
+                                <button
+                                    key={action.id}
+                                    onClick={() => {
+                                        setContextMenu(null);
+                                        action.onClick(contextMenu.entry.path, activeRoot);
+                                    }}
+                                >
+                                    {action.icon && <span className="action-icon">{action.icon}</span>}
+                                    {action.label}
+                                </button>
+                            ))}
+                        </>
+                    )}
                 </div>
             )}
         </>
