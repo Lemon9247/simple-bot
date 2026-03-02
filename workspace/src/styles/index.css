@@ -921,3 +921,160 @@ body {
         grid-template-columns: 1fr;
     }
 }
+
+/* ─── Tool Call Blocks (Chat) ──────────────────────────────── */
+.tool-call {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin: 0.35rem 0;
+    overflow: hidden;
+    font-size: 0.8rem;
+}
+
+.tool-call--running {
+    border-color: var(--yellow);
+    border-left: 3px solid var(--yellow);
+}
+
+.tool-call--complete {
+    border-color: var(--border);
+    border-left: 3px solid var(--green);
+}
+
+.tool-call--error {
+    border-color: rgba(248, 81, 73, 0.4);
+    border-left: 3px solid var(--red);
+    background: rgba(248, 81, 73, 0.05);
+}
+
+.tool-call-header {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.5rem;
+    cursor: pointer;
+    user-select: none;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.tool-call-header:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.tool-call-icon {
+    font-size: 0.75rem;
+    flex-shrink: 0;
+}
+
+.tool-call-name {
+    font-weight: 600;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tool-call-status-icon {
+    font-size: 0.7rem;
+    flex-shrink: 0;
+    margin-left: auto;
+}
+
+.tool-call--running .tool-call-status-icon {
+    animation: tool-call-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes tool-call-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+.tool-call-chevron {
+    font-size: 0.6rem;
+    color: var(--text-dim);
+    flex-shrink: 0;
+}
+
+.tool-call-body {
+    padding: 0.35rem 0.5rem;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.tool-call-args {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    word-break: break-all;
+    line-height: 1.4;
+}
+
+.tool-call-args-label {
+    color: var(--text-dim);
+    font-weight: 500;
+}
+
+.tool-call-result {
+    font-size: 0.78rem;
+    line-height: 1.5;
+}
+
+.tool-call-result--error {
+    color: var(--red);
+}
+
+.tool-call-text {
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.tool-call-image {
+    max-width: 100%;
+    border-radius: 4px;
+    margin: 0.25rem 0;
+}
+
+.tool-call-show-more {
+    display: inline-block;
+    margin-top: 0.25rem;
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-size: 0.75rem;
+    cursor: pointer;
+    padding: 0;
+    text-decoration: underline;
+}
+
+.tool-call-show-more:hover {
+    opacity: 0.8;
+}
+
+.tool-call-running-indicator {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    font-style: italic;
+    animation: tool-call-pulse 1.5s ease-in-out infinite;
+}
+
+/* Text blocks within agent messages */
+.chat-block-text {
+    /* Inherits from .chat-msg */
+}
+
+/* Thinking blocks */
+.chat-block-thinking {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    font-style: italic;
+    padding: 0.25rem 0;
+}
+
+.thinking-label {
+    font-weight: 500;
+    margin-right: 0.25rem;
+}
