@@ -218,8 +218,8 @@ describe("bot!status", () => {
 
         // Record usage events directly via the tracker
         const tracker = daemon.getTracker();
-        tracker.record({ model: "claude-sonnet-4", inputTokens: 150_000, outputTokens: 80_000, contextSize: 45_000 });
-        tracker.record({ model: "claude-sonnet-4", inputTokens: 300_000, outputTokens: 140_000, contextSize: 60_000 });
+        tracker.record({ model: "claude-sonnet-4", inputTokens: 5, outputTokens: 80_000, cacheReadTokens: 140_000, cacheWriteTokens: 10_000, contextSize: 45_000, cost: 2.50 });
+        tracker.record({ model: "claude-sonnet-4", inputTokens: 3, outputTokens: 140_000, cacheReadTokens: 150_000, cacheWriteTokens: 5_000, contextSize: 60_000, cost: 4.00 });
 
         sendCommand(listener, "bot!status");
         await new Promise((r) => setTimeout(r, 50));
@@ -227,11 +227,11 @@ describe("bot!status", () => {
         expect(listener.sent).toHaveLength(1);
         const status = listener.sent[0].text;
 
-        // Should contain usage line with cost, tokens, and message count
+        // Should contain usage line with cost, output tokens, cached tokens, and message count
         expect(status).toContain("📊 today:");
-        expect(status).toContain("$");
-        expect(status).toContain("in /");
+        expect(status).toContain("$6.50");
         expect(status).toContain("out");
+        expect(status).toContain("cached");
         expect(status).toContain("2 msgs");
     });
 

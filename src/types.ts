@@ -163,7 +163,6 @@ export interface CronConfig {
 
 export interface TrackingConfig {
     usageLog?: string;
-    rates?: Record<string, { input: number; output: number }>;
     capacity?: number;
     retentionDays?: number;
 }
@@ -173,6 +172,8 @@ export interface UsageEvent {
     model: string;
     inputTokens: number;
     outputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
     contextSize: number;
     cost: number;
     compaction: boolean;

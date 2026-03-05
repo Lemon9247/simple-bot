@@ -28,7 +28,7 @@ export interface DashboardProvider {
     getListenerCount(): number;
     getCronJobs(): Array<{ name: string; schedule: string; enabled: boolean }>;
     getUsage(): {
-        today: { inputTokens: number; outputTokens: number; cost: number; messageCount: number };
+        today: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; cost: number; messageCount: number };
         week: { cost: number };
         contextSize: number;
     };
@@ -37,7 +37,7 @@ export interface DashboardProvider {
     getSessionNames(): string[];
     getSessionState(name: string): SessionStateInfo | null;
     getUsageBySession(name: string): {
-        today: { inputTokens: number; outputTokens: number; cost: number; messageCount: number };
+        today: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; cost: number; messageCount: number };
     } | null;
 }
 
@@ -607,7 +607,7 @@ export class HttpServer {
         this.route("GET", "/api/usage", (req, res) => {
             if (!this.dashboard) {
                 this.json(res, 200, {
-                    today: { inputTokens: 0, outputTokens: 0, cost: 0, messageCount: 0 },
+                    today: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0, messageCount: 0 },
                     week: { cost: 0 },
                     contextSize: 0,
                 });

@@ -101,7 +101,7 @@ export class Daemon implements DaemonRef, DashboardProvider {
     }
 
     getUsageStats(): {
-        today: { inputTokens: number; outputTokens: number; cost: number; messageCount: number };
+        today: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; cost: number; messageCount: number };
         week: { cost: number };
     } | null {
         const today = this.tracker.today();
@@ -158,7 +158,7 @@ export class Daemon implements DaemonRef, DashboardProvider {
     }
 
     getUsage(): {
-        today: { inputTokens: number; outputTokens: number; cost: number; messageCount: number };
+        today: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; cost: number; messageCount: number };
         week: { cost: number };
         contextSize: number;
     } {
@@ -194,7 +194,7 @@ export class Daemon implements DaemonRef, DashboardProvider {
     }
 
     getUsageBySession(name: string): {
-        today: { inputTokens: number; outputTokens: number; cost: number; messageCount: number };
+        today: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; cost: number; messageCount: number };
     } | null {
         if (!this.sessionManager.getSessionInfo(name)) return null;
         return { today: this.tracker.todayBySession(name) };
@@ -595,16 +595,18 @@ export class Daemon implements DaemonRef, DashboardProvider {
 
         const usage = msg.usage ?? {};
         const model = msg.model ?? "unknown";
-        const inputTokens = (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
+        const inputTokens = usage.input ?? 0;
         const outputTokens = usage.output ?? 0;
+        const cacheReadTokens = usage.cacheRead ?? 0;
+        const cacheWriteTokens = usage.cacheWrite ?? 0;
 
         // Context size = total tokens the model saw for this response
-        const contextSize = usage.totalTokens || (inputTokens + outputTokens);
+        const contextSize = usage.totalTokens || (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens);
 
-        // Use pi's reported cost directly instead of estimating from rates
+        // Use pi's reported cost directly
         const cost = usage.cost?.total ?? 0;
 
-        const recorded = this.tracker.record({ model, inputTokens, outputTokens, contextSize, cost, sessionName });
+        const recorded = this.tracker.record({ model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, contextSize, cost, sessionName });
         logger.info("Usage recorded", {
             session: sessionName,
             model: recorded.model,

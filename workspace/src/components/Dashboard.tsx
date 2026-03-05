@@ -224,9 +224,17 @@ export default function Dashboard() {
                         <div className="value">{usage?.today?.messageCount ?? 0}</div>
                     </div>
                     <div className="usage-card">
-                        <div className="label">Tokens (in/out)</div>
+                        <div className="label">Output</div>
+                        <div className="value">{formatTokens(usage?.today?.outputTokens)}</div>
+                    </div>
+                    <div className="usage-card">
+                        <div className="label">Input (fresh)</div>
+                        <div className="value">{formatTokens(usage?.today?.inputTokens)}</div>
+                    </div>
+                    <div className="usage-card">
+                        <div className="label">Cache (read/write)</div>
                         <div className="value">
-                            {formatTokens(usage?.today?.inputTokens)} / {formatTokens(usage?.today?.outputTokens)}
+                            {formatTokens(usage?.today?.cacheReadTokens)} / {formatTokens(usage?.today?.cacheWriteTokens)}
                         </div>
                     </div>
                 </div>

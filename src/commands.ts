@@ -13,7 +13,7 @@ export interface DaemonRef {
     setThinkingEnabled(sessionName: string, enabled: boolean): void;
     getContextSize(): number;
     getUsageStats(): {
-        today: { inputTokens: number; outputTokens: number; cost: number; messageCount: number };
+        today: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; cost: number; messageCount: number };
         week: { cost: number };
     } | null;
     getConfigWatcher?(): ConfigWatcher | undefined;
@@ -229,9 +229,9 @@ export const statusCommand: Command = {
             const stats = daemon.getUsageStats();
             if (stats && stats.today.messageCount > 0) {
                 const costStr = `$${stats.today.cost.toFixed(2)}`;
-                const inK = `${Math.round(stats.today.inputTokens / 1000)}k`;
                 const outK = `${Math.round(stats.today.outputTokens / 1000)}k`;
-                usageLine = `📊 today: ${costStr} | ${inK} in / ${outK} out | ${stats.today.messageCount} msgs`;
+                const cacheR = `${Math.round(stats.today.cacheReadTokens / 1000)}k`;
+                usageLine = `📊 today: ${costStr} | ${outK} out | ${cacheR} cached | ${stats.today.messageCount} msgs`;
             }
         }
 

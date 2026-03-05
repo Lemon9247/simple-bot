@@ -3,20 +3,6 @@ import { dirname } from "node:path";
 import type { UsageEvent, TrackingConfig } from "./types.js";
 import * as logger from "./logger.js";
 
-/** Default per-million-token rates (input, output) */
-const DEFAULT_RATES: Record<string, { input: number; output: number }> = {
-    "claude-sonnet-4-5": { input: 3.0, output: 15.0 },
-    "claude-sonnet-4": { input: 3.0, output: 15.0 },
-    "claude-haiku-4-5": { input: 0.8, output: 4.0 },
-    "claude-opus-4": { input: 15.0, output: 75.0 },
-    "gpt-4o": { input: 2.5, output: 10.0 },
-    "gpt-4o-mini": { input: 0.15, output: 0.6 },
-    "o3": { input: 10.0, output: 40.0 },
-    "o4-mini": { input: 1.1, output: 4.4 },
-    "gemini-2.5-pro": { input: 1.25, output: 10.0 },
-    "gemini-2.5-flash": { input: 0.15, output: 0.6 },
-};
-
 const MS_PER_DAY = 86_400_000;
 const DEFAULT_CAPACITY = 1000;
 const DEFAULT_RETENTION_DAYS = 30;
@@ -24,6 +10,8 @@ const DEFAULT_RETENTION_DAYS = 30;
 export interface UsageSummary {
     inputTokens: number;
     outputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
     cost: number;
     messageCount: number;
 }
@@ -39,14 +27,12 @@ export class Tracker {
     private head = 0;
     private count = 0;
     private readonly capacity: number;
-    private readonly rates: Record<string, { input: number; output: number }>;
     private readonly usageLogPath: string | null;
     private readonly retentionDays: number;
     private lastContextSize = 0;
 
     constructor(config: TrackingConfig = {}) {
         this.capacity = config.capacity ?? DEFAULT_CAPACITY;
-        this.rates = { ...DEFAULT_RATES, ...config.rates };
         this.usageLogPath = config.usageLog ?? null;
         this.retentionDays = config.retentionDays ?? DEFAULT_RETENTION_DAYS;
         this.buffer = new Array(this.capacity).fill(null);
@@ -71,6 +57,9 @@ export class Tracker {
         for (const line of lines) {
             try {
                 const event = JSON.parse(line) as UsageEvent;
+                // Backfill cache fields for old log entries
+                if (event.cacheReadTokens == null) event.cacheReadTokens = 0;
+                if (event.cacheWriteTokens == null) event.cacheWriteTokens = 0;
                 if (event.timestamp >= cutoff) {
                     this.insertEvent(event);
                 }
@@ -82,32 +71,28 @@ export class Tracker {
         logger.info("Loaded usage log", { events: this.count, path: this.usageLogPath });
     }
 
-    /** Estimate cost for a given model and token counts. */
-    estimateCost(model: string, inputTokens: number, outputTokens: number): number {
-        const rate = this.rates[model];
-        if (!rate) return 0;
-        return (inputTokens * rate.input + outputTokens * rate.output) / 1_000_000;
-    }
-
     /** Record a usage event. Fire-and-forget JSONL write if persistence enabled. */
     record(data: {
         model: string;
         inputTokens: number;
         outputTokens: number;
+        cacheReadTokens: number;
+        cacheWriteTokens: number;
         contextSize: number;
-        cost?: number;
+        cost: number;
         sessionName?: string;
     }): UsageEvent {
         const compaction = this.detectCompaction(data.contextSize);
-        const cost = data.cost ?? this.estimateCost(data.model, data.inputTokens, data.outputTokens);
 
         const event: UsageEvent = {
             timestamp: Date.now(),
             model: data.model,
             inputTokens: data.inputTokens,
             outputTokens: data.outputTokens,
+            cacheReadTokens: data.cacheReadTokens,
+            cacheWriteTokens: data.cacheWriteTokens,
             contextSize: data.contextSize,
-            cost,
+            cost: data.cost,
             compaction,
             ...(data.sessionName ? { sessionName: data.sessionName } : {}),
         };
@@ -177,11 +162,6 @@ export class Tracker {
         return this.count;
     }
 
-    /** The configured model rates. */
-    get modelRates(): Record<string, { input: number; output: number }> {
-        return this.rates;
-    }
-
     // --- internals ---
 
     private startOfDayUTC(): number {
@@ -208,6 +188,8 @@ export class Tracker {
     private aggregate(predicate: (e: UsageEvent) => boolean): UsageSummary {
         let inputTokens = 0;
         let outputTokens = 0;
+        let cacheReadTokens = 0;
+        let cacheWriteTokens = 0;
         let cost = 0;
         let messageCount = 0;
 
@@ -217,12 +199,14 @@ export class Tracker {
             if (event && predicate(event)) {
                 inputTokens += event.inputTokens;
                 outputTokens += event.outputTokens;
+                cacheReadTokens += (event.cacheReadTokens ?? 0);
+                cacheWriteTokens += (event.cacheWriteTokens ?? 0);
                 cost += event.cost;
                 messageCount++;
             }
         }
 
-        return { inputTokens, outputTokens, cost, messageCount };
+        return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, cost, messageCount };
     }
 
     private appendToLog(event: UsageEvent): void {

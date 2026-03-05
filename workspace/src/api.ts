@@ -87,7 +87,7 @@ export interface SessionInfo {
     model?: string;
     contextSize?: number;
     lastActivity?: number;
-    today?: { inputTokens: number; outputTokens: number; cost: number; messageCount: number } | null;
+    today?: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; cost: number; messageCount: number } | null;
 }
 
 export function fetchSessions(): Promise<{ sessions: SessionInfo[] }> {
@@ -101,7 +101,7 @@ export function fetchCron(): Promise<{
 }
 
 export function fetchUsage(): Promise<{
-    today: { inputTokens: number; outputTokens: number; cost: number; messageCount: number };
+    today: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; cost: number; messageCount: number };
     week: { cost: number };
     contextSize: number;
 }> {
