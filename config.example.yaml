@@ -15,6 +15,7 @@ sessions:
             cwd: /home/user
             # extensions:
             #     - /path/to/extension.ts
+            #     - /path/to/ui.ts          # block protocol: show_image, confirm, select
 
 defaultSession: default
 

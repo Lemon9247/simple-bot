@@ -543,6 +543,118 @@ nest -w wren -s background attach # specific session
 
 For Docker deployments, set `attach.host` in config to the container's reachable address.
 
+## Block Protocol
+
+Structured content and interactive prompts between the agent and listeners. The agent sends blocks via pi extensions that call nest's HTTP API. The kernel routes blocks through broadcast. Each listener renders what it can, falls back to text for the rest.
+
+### Architecture
+
+```
+Agent ──tool call──▶ Pi Extension ──HTTP POST──▶ Nest API ──broadcast──▶ Listeners
+                                                                         ├─ CLI (pi-tui)
+                                                                         ├─ Discord
+                                                                         └─ Webhook
+
+                    Pi Extension ◀──HTTP response── Nest API ◀──response── Listener
+                    (tool returns value)            (held open)             (user input)
+```
+
+1. **Agent calls a tool** — e.g. `show_image({ path: "/tmp/chart.png" })` or `confirm({ text: "Deploy?" })`
+2. **Extension POSTs to nest** — `POST /api/block` with the block payload. Auth via `SERVER_TOKEN`.
+3. **Kernel broadcasts the block** — to all listeners, alongside fallback text
+4. **Each listener renders it** — CLI renders inline image, Discord sends attachment, etc.
+
+For interactive prompts (confirm, select, input), the HTTP request **holds open** until the user responds or a timeout expires.
+
+### Block Type
+
+```typescript
+interface Block {
+    id: string;                       // unique, for updates/removes/responses
+    kind: string;                     // renderer hint (image, markdown, confirm, etc.)
+    data: Record<string, unknown>;    // kind-specific payload
+    fallback: string;                 // plain text — always renderable
+}
+```
+
+### Display Blocks
+
+| Kind | Data Fields | CLI Rendering |
+|------|-------------|---------------|
+| `image` | `base64`, `mimeType`, `filename`, `maxWidth?`, `maxHeight?` | Inline terminal image (Kitty/iTerm2) |
+| `markdown` | `text` | Markdown component |
+| `code` | `text`, `language?` | Fenced code block |
+| `table` | `columns`, `rows`, `caption?` | Pipe table via Markdown |
+| `progress` | `value`, `total`, `label?` | `[████████░░░░] 75% Deploying...` |
+| `status` | `items: [{label, value, style}]` | Colored status line |
+
+Unknown block kinds render their `fallback` as markdown.
+
+### Interactive Prompts
+
+| Kind | Data Fields | CLI Rendering | Response |
+|------|-------------|---------------|----------|
+| `confirm` | `text`, `default?` | Overlay with y/n keys | `{ value: true/false }` |
+| `select` | `text`, `items`, `maxVisible?` | SelectList overlay | `{ value: "selected" }` |
+| `input` | `text`, `placeholder?` | Input overlay | `{ value: "typed text" }` |
+
+### HTTP Endpoints
+
+```
+POST /api/block           — send a block (display or prompt)
+POST /api/block/upload    — multipart binary image upload
+POST /api/block/update    — update an existing block in-place
+POST /api/block/remove    — remove a block
+```
+
+### Extension Example
+
+The agent gets UI tools via the `ui.ts` extension at `src/extensions/ui.ts`:
+
+```typescript
+// In session config:
+sessions:
+    wren:
+        pi:
+            extensions:
+                - /app/extensions/ui.ts
+```
+
+This provides `show_image`, `confirm`, and `select` tools. The extension reads `NEST_URL` and `SERVER_TOKEN` from env (automatically set by the session manager).
+
+```typescript
+// Agent can then:
+// - show_image({ path: "/tmp/chart.png" })         → inline image
+// - confirm({ text: "Deploy to production?" })      → true/false
+// - select({ text: "Target?", options: [...] })     → selected value
+```
+
+### WebSocket Protocol (CLI)
+
+New event types added to the CLI WebSocket protocol:
+
+**Server → Client:**
+```json
+{ "type": "block", "id": "img-1", "kind": "image", "data": {...}, "fallback": "..." }
+{ "type": "block_update", "id": "img-1", "data": {...}, "fallback": "..." }
+{ "type": "block_remove", "id": "img-1" }
+{ "type": "prompt", "id": "p-1", "kind": "confirm", "data": {...}, "fallback": "..." }
+{ "type": "prompt_cancel", "id": "p-1" }
+```
+
+**Client → Server:**
+```json
+{ "type": "response", "id": "p-1", "value": true }
+{ "type": "response", "id": "p-1", "cancelled": true }
+```
+
+### Discord
+
+- Image blocks become `MessageAttachment` from decoded base64
+- Confirm prompts use buttons (Yes/No)
+- Select prompts use select menus
+- Input prompts fall back to text (Discord lacks inline text input)
+
 ## Writing Plugins
 
 1. Create a `.ts` file in the plugins directory
