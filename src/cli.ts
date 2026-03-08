@@ -401,19 +401,12 @@ async function startBareMetal(
 
     const config = loadConfig(configPath);
 
+    // Extensions and session-dir are handled by SessionManager.startSession().
+    // The factory just sets up the basic bridge with agentDir env if needed.
     function createBridge(opts: { cwd: string; command?: string; args?: string[] }) {
         const sessionConfig = Object.values(config.sessions).find(
             (s) => s.pi.cwd === opts.cwd,
         );
-        const extensions = sessionConfig?.pi.extensions;
-
-        const bridgeArgs = [...(opts.args ?? ["--mode", "rpc", "--continue"])];
-        if (extensions) {
-            for (const ext of extensions) {
-                bridgeArgs.push("-e", resolveExtensionPath(ext));
-            }
-        }
-
         const agentDir = sessionConfig?.pi.agentDir ?? config.instance?.agentDir;
         const env: Record<string, string> = {};
         if (agentDir) {
@@ -423,7 +416,7 @@ async function startBareMetal(
         return new Bridge({
             cwd: opts.cwd,
             command: opts.command,
-            args: bridgeArgs,
+            args: opts.args ?? ["--mode", "rpc", "--continue"],
             ...(Object.keys(env).length > 0 ? { env } : {}),
         });
     }
