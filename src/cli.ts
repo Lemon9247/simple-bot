@@ -464,7 +464,7 @@ async function cmdAttach(args: ParsedArgs): Promise<void> {
             if (existsSync(envPath)) {
                 const envFile = readFileSync(envPath, "utf-8");
                 const match = envFile.match(new RegExp(`^${envName}=(.+)$`, "m"));
-                if (match) resolvedToken = match[1].trim();
+                if (match) resolvedToken = match[1].trim().replace(/^["']|["']$/g, "");
             }
         }
         if (!resolvedToken) {
@@ -477,10 +477,7 @@ async function cmdAttach(args: ParsedArgs): Promise<void> {
     console.log(`Connecting to ${wsUrl}...`);
 
     const { default: WebSocket } = await import("ws");
-    const { createInterface } = await import("node:readline");
-
     const ws = new WebSocket(wsUrl);
-    let connected = false;
 
     ws.on("open", () => {
         ws.send(JSON.stringify({ type: "auth", token: resolvedToken, username }));
@@ -490,106 +487,27 @@ async function cmdAttach(args: ParsedArgs): Promise<void> {
         let msg: any;
         try { msg = JSON.parse(rawData.toString()); } catch { return; }
 
-        switch (msg.type) {
-            case "auth_ok":
-                connected = true;
-                console.log(`\x1b[32m✓\x1b[0m Connected to nest (${workspace.name ?? workspace.path})`);
-                console.log(`  Type a message to send to the session. Ctrl+C to disconnect.\n`);
-                startRepl();
-                break;
-
-            case "auth_fail":
-                console.error("Authentication failed");
-                process.exit(1);
-                break;
-
-            case "text":
-                if (msg.text) {
-                    // Clear the current prompt line, print response, restore prompt
-                    process.stdout.write("\r\x1b[K");
-                    console.log(`\x1b[36mwren\x1b[0m: ${msg.text}`);
-                    if (rl) rl.prompt();
-                }
-                break;
-
-            case "tool_start":
-                process.stdout.write("\r\x1b[K");
-                console.log(`\x1b[33m⚙ ${msg.tool ?? "tool"}\x1b[0m ${msg.args ? JSON.stringify(msg.args).slice(0, 120) : ""}`);
-                if (rl) rl.prompt();
-                break;
-
-            case "files":
-                process.stdout.write("\r\x1b[K");
-                for (const f of msg.files ?? []) {
-                    console.log(`\x1b[35m📎 ${f.filename}\x1b[0m (${f.size} bytes)`);
-                }
-                if (rl) rl.prompt();
-                break;
-
-            case "typing":
-                // Could show a spinner, but keep it simple
-                break;
-
-            case "system":
-                process.stdout.write("\r\x1b[K");
-                console.log(`\x1b[90m${msg.text}\x1b[0m`);
-                if (rl) rl.prompt();
-                break;
-
-            case "error":
-                process.stdout.write("\r\x1b[K");
-                console.error(`\x1b[31m✗ ${msg.text}\x1b[0m`);
-                if (rl) rl.prompt();
-                break;
+        if (msg.type === "auth_ok") {
+            // Auth succeeded — hand off to TUI
+            import("./attach-tui.js").then(({ startTui }) => {
+                startTui(ws, workspace.name ?? "nest");
+            });
+        } else if (msg.type === "auth_fail") {
+            console.error("Authentication failed");
+            process.exit(1);
         }
     });
 
-    ws.on("close", (code, reason) => {
-        if (connected) {
-            console.log(`\nDisconnected (${code}: ${reason || "closed"})`);
-        }
-        process.exit(0);
-    });
-
-    ws.on("error", (err) => {
-        if (!connected) {
-            console.error(`Failed to connect to ${wsUrl}`);
-            console.error("Is the nest server running? Check: docker ps");
-        } else {
-            console.error(`WebSocket error: ${err.message}`);
-        }
+    ws.on("close", () => {
+        console.error("Connection closed before auth");
         process.exit(1);
     });
 
-    let rl: import("node:readline").Interface | null = null;
-
-    function startRepl() {
-        rl = createInterface({
-            input: process.stdin,
-            output: process.stdout,
-            prompt: "\x1b[32m> \x1b[0m",
-        });
-
-        rl.prompt();
-
-        rl.on("line", (line) => {
-            const text = line.trim();
-            if (!text) {
-                rl!.prompt();
-                return;
-            }
-            if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: "message", text }));
-            } else {
-                console.error("Not connected");
-            }
-            rl!.prompt();
-        });
-
-        rl.on("close", () => {
-            ws.close();
-        });
-    }
+    ws.on("error", (err) => {
+        console.error(`Failed to connect to ${wsUrl}`);
+        console.error("Is the nest server running?");
+        process.exit(1);
+    });
 }
 
 async function cmdStatus(args: ParsedArgs): Promise<void> {

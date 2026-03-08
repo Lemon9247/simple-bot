@@ -3,3 +3,5 @@ dist/
 .env
 config.yaml
 home/
+public/
+scratchpad
