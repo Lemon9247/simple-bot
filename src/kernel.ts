@@ -586,7 +586,7 @@ export class Kernel {
             ? resolve(inst.pluginsDir)
             : resolve(projectDir, "plugins");
         const typesPath = resolve(srcDir, "types.ts");
-        const readmePath = resolve(projectDir, "README.md");
+        const docsDir = resolve(projectDir, "docs");
 
         const lines = [
             `## Nest Environment`,
@@ -632,7 +632,7 @@ export class Kernel {
             `- \`log.info/warn/error(msg, data?)\` — structured logging`,
             `- \`utils.splitMessage(text, maxLen?)\` — split text for platform limits`,
             ``,
-            `Reference: \`${readmePath}\` and \`${typesPath}\``,
+            `Reference: \`${docsDir}/plugins.md\` (full NestAPI docs) and \`${typesPath}\` (type definitions)`,
             ``,
             `Hot reload:`,
             `- \`bot!reload\` — reloads all nest.ts plugins`,
