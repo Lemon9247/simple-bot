@@ -1,7 +1,10 @@
-#!/bin/bash
+#!/bin/sh
 set -e
 
-# ─── LAN Isolation ──────────────────────────────────────────
+# --- Nix Profile --------------------------------------------
+[ -f /root/.nix-profile/etc/profile.d/nix.sh ] && . /root/.nix-profile/etc/profile.d/nix.sh
+
+# --- LAN Isolation -------------------------------------------
 # Block access to private networks (RFC1918 + link-local) so the
 # agent can't reach LAN services.  Requires NET_ADMIN capability
 # (dropped after rules are applied).
@@ -16,13 +19,15 @@ if [ "${NEST_NO_FIREWALL:-}" != "1" ]; then
     # Allow responses to established connections
     iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 
-    # Allow specific LAN addresses
+    # Allow specific LAN addresses (comma-separated)
     if [ -n "${NEST_LAN_ALLOW:-}" ]; then
-        IFS=',' read -ra ADDRS <<< "$NEST_LAN_ALLOW"
-        for addr in "${ADDRS[@]}"; do
-            addr="$(echo "$addr" | xargs)"  # trim whitespace
+        OLD_IFS="$IFS"
+        IFS=','
+        for addr in $NEST_LAN_ALLOW; do
+            addr=$(echo "$addr" | tr -d ' ')
             [ -n "$addr" ] && iptables -A OUTPUT -d "$addr" -j ACCEPT
         done
+        IFS="$OLD_IFS"
     fi
 
     # Block all private/LAN networks
@@ -35,6 +40,6 @@ if [ "${NEST_NO_FIREWALL:-}" != "1" ]; then
     sysctl -w net.ipv6.conf.all.disable_ipv6=1 2>/dev/null || true
 fi
 
-# ─── Drop Capabilities ─────────────────────────────────────
+# --- Drop Capabilities --------------------------------------
 # NET_ADMIN was only needed for iptables setup above.
 exec setpriv --no-new-privs --bounding-set=-net_admin,-net_raw -- "$@"

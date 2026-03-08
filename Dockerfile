@@ -1,6 +1,6 @@
 # ─── Nest: sandboxed agent gateway ───────────────────────────
-# Multi-stage build: compile TypeScript, then run in a nix-enabled container.
-# Nix is available for the agent to install arbitrary dependencies.
+# Multi-stage build: compile TypeScript, then run in a Debian
+# container with nix available for the agent to install deps.
 
 # ─── Stage 1: Build ─────────────────────────────────────────
 FROM node:22-bookworm-slim AS build
@@ -12,12 +12,22 @@ COPY . .
 RUN npx tsc
 
 # ─── Stage 2: Runtime ───────────────────────────────────────
-FROM nixos/nix:latest AS runtime
+FROM node:22-bookworm
 
-# Install node + core tools in the nix environment
-RUN nix-channel --update && \
-    nix-env -iA nixpkgs.nodejs_22 nixpkgs.git nixpkgs.openssh nixpkgs.curl \
-            nixpkgs.iproute2 nixpkgs.iptables nixpkgs.util-linux
+# Core tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git openssh-client curl wget jq \
+    ripgrep fd-find fzf tree less vim-tiny \
+    build-essential python3 python3-pip python3-venv \
+    ca-certificates dnsutils iptables iproute2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install nix (single-user, no daemon)
+RUN curl -L https://nixos.org/nix/install | sh -s -- --no-daemon \
+    && ln -s /root/.nix-profile/bin/* /usr/local/bin/ 2>/dev/null || true
+
+# pi coding agent
+RUN npm install -g @mariozechner/pi-coding-agent@0.53.1
 
 WORKDIR /app
 
@@ -26,6 +36,7 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/plugins ./plugins
+COPY --from=build /app/src ./src
 
 # Entrypoint: LAN isolation + capability drop
 COPY scripts/entrypoint.sh /entrypoint.sh
@@ -37,4 +48,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8484/health || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["node", "dist/cli.js", "start", "--config", "/config/config.yaml"]
+CMD ["node", "--import", "tsx/esm", "dist/cli.js", "start", "--config", "/config/config.yaml"]

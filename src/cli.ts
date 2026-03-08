@@ -57,6 +57,12 @@ export function registerWorkspace(name: string, path: string): void {
 
 function resolveWorkspace(nameOrPath?: string): { path: string; name?: string } | null {
     if (!nameOrPath) {
+        // Try current directory first
+        const cwd = process.cwd();
+        if (existsSync(join(cwd, "config.yaml"))) {
+            return { path: cwd };
+        }
+
         // Try default workspace from registry
         const registry = loadRegistry();
         if (registry.default) {
@@ -223,6 +229,17 @@ async function cmdInit(args: ParsedArgs): Promise<void> {
 }
 
 async function cmdStart(args: ParsedArgs): Promise<void> {
+    // Explicit --config: run bare-metal from that path (no workspace needed)
+    if (args.config) {
+        const configPath = resolve(args.config);
+        if (!existsSync(configPath)) {
+            console.error(`Error: config file not found: ${configPath}`);
+            process.exit(1);
+        }
+        await startBareMetal({ path: dirname(configPath) }, configPath);
+        return;
+    }
+
     const ws = resolveWorkspace(args.workspace);
     if (!ws) {
         console.error(args.workspace
@@ -232,7 +249,12 @@ async function cmdStart(args: ParsedArgs): Promise<void> {
         process.exit(1);
     }
 
-    const configPath = args.config ?? join(ws.path, "config.yaml");
+    const configPath = join(ws.path, "config.yaml");
+
+    // Register workspace if not already known
+    if (ws.name) {
+        registerWorkspace(ws.name, ws.path);
+    }
 
     // Sandbox mode: docker-compose.yml exists in workspace
     const composePath = join(ws.path, "docker-compose.yml");
