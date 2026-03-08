@@ -4,6 +4,76 @@ Minimal agent gateway kernel. Sessions, plugins, cron, HTTP.
 
 Nest does five things: manages pi sessions, loads plugins, runs cron jobs, handles config, and serves HTTP. Everything else — listeners, commands, dashboards, middleware, security — is a plugin.
 
+## Setup
+
+### Requirements
+
+- **Node.js 22+**
+- **pi** — `npm install -g @mariozechner/pi-coding-agent`
+- **Docker** (optional, for sandbox mode)
+
+### Quick Start
+
+```bash
+git clone <repo-url> nest && cd nest
+npm install
+npx nest init              # interactive setup wizard
+npx nest start             # start the gateway
+```
+
+The wizard creates a workspace at `~/.nest/<name>/` with:
+- `config.yaml` — sessions, plugins, server, cron
+- `plugins/` — seeded with discord, commands, dashboard, webhook
+- `.pi/agent/` — isolated pi config (models, sessions)
+- Docker files (if sandbox enabled) — `Dockerfile`, `docker-compose.yml`, `entrypoint.sh`
+
+### Docker Sandbox
+
+When the wizard asks about sandbox mode, say yes to get Docker isolation with nix inside the container. The agent can install arbitrary dependencies via `nix-env` and they persist across container rebuilds.
+
+```bash
+npx nest init              # enable sandbox in the wizard
+npx nest start             # runs docker compose up -d --build
+npx nest stop              # runs docker compose down
+npx nest attach            # attach pi TUI from the host
+```
+
+The wizard generates `Dockerfile`, `docker-compose.yml`, and `entrypoint.sh` in your workspace. **These are your files** — edit them directly for custom networking, volumes, or security.
+
+### Rootless Docker
+
+If you're running rootless Docker (recommended for security), the container needs to run as `root` internally — rootless Docker maps container UID 0 to your host user, so this is safe. The wizard asks about this and sets `user: "0:0"` in `docker-compose.yml`.
+
+Without rootless Docker running as root in the container is **not recommended**. Use `user: "1000:1000"` or similar instead.
+
+### LAN Isolation
+
+The sandbox can block access to private networks (RFC1918) via iptables, preventing the agent from reaching LAN services. The wizard prompts for:
+
+- **Enable LAN isolation** — blocks 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16
+- **Allowed addresses** — whitelist specific LAN services (e.g. a local SearXNG instance)
+
+This requires `NET_ADMIN` capability (added to `docker-compose.yml`). The entrypoint drops `NET_ADMIN` after applying rules so the agent process can't undo them.
+
+You can also set `NEST_LAN_ALLOW=addr1,addr2` as an environment variable for dynamic allowlisting, or `NEST_NO_FIREWALL=1` to skip all rules.
+
+### Bare Metal
+
+For deployments without Docker:
+
+```bash
+npm install
+npx nest init              # skip sandbox in the wizard
+npx nest start             # runs the kernel directly
+```
+
+Or with systemd:
+
+```bash
+cp systemd/nest.service ~/.config/systemd/user/
+systemctl --user enable --now nest
+```
+
 ## Architecture
 
 ```mermaid
@@ -334,19 +404,14 @@ discord:
         "123456": "wren"
 ```
 
-## Quick Start
-
-```bash
-npm install
-nest init                    # setup wizard — creates workspace
-nest -w wren start           # start gateway
-```
-
 ## CLI
 
 ```bash
 nest init [name]             # create workspace (full setup wizard)
-nest start                   # start gateway
+nest start                   # start gateway (docker compose if sandboxed)
+nest stop                    # stop sandboxed workspace (docker compose down)
+nest build                   # rebuild sandbox image (docker compose build)
+nest rebuild                 # stop + build + start
 nest attach                  # attach pi TUI to a running session
 nest status                  # show workspace info
 nest list                    # list known workspaces
@@ -391,69 +456,25 @@ Each workspace has its own `.pi/agent/` directory for `models.json`, sessions, a
 
 ### Sandbox
 
-Enable Docker sandboxing per workspace for filesystem isolation. Nix is available inside the container so the agent can install arbitrary dependencies declaratively.
+Sandbox mode uses Docker for filesystem isolation. `nest init` generates `Dockerfile`, `docker-compose.yml`, and `entrypoint.sh` in the workspace — these are real Docker files you own and can edit.
 
-```yaml
-instance:
-    name: wren
-    sandbox:
-        enabled: true
+Detection is simple: if `docker-compose.yml` exists in the workspace, `nest start/stop/build` delegate to `docker compose`. No config flags needed.
+
+```
+~/.nest/wren/
+├── config.yaml              # nest config (unchanged)
+├── docker-compose.yml       # generated, edit for networking/volumes/limits
+├── Dockerfile               # generated, edit to add packages
+├── entrypoint.sh            # generated, edit for firewall rules
+├── .env                     # secrets (tokens, API keys)
+└── ...
 ```
 
-When `sandbox.enabled` is true, `nest start` transparently spawns a Docker container instead of running bare-metal:
-
-- **Workspace = HOME** — workspace dir mounted at `/home/nest`, `HOME=/home/nest`
-- **Pi isolation** — `PI_CODING_AGENT_DIR=/home/nest/.pi/agent`
+Features:
 - **Nix available** — agent can `nix-env -iA nixpkgs.foo` for any dependency
-- **Host networking** by default
-- **no-new-privileges** enabled by default
-
-Full sandbox options:
-
-```yaml
-instance:
-    sandbox:
-        enabled: true
-        image: "nest:latest"
-
-        # Filesystem
-        mounts:                          # extra bind mounts
-            - "/data/shared:/shared:ro"
-            - "/var/log:/logs"
-        readOnly: false                  # read-only root filesystem
-        tmpfs:                           # tmpfs mounts
-            - "/tmp:size=1g"
-
-        # Networking
-        network: "host"                  # host, none, bridge, or network name
-        dns:                             # custom DNS
-            - "1.1.1.1"
-        expose:                          # port forwarding (non-host networks)
-            - 8484
-
-        # User & permissions
-        user: "1000:1000"                # run as uid:gid
-        capDrop:                         # drop capabilities
-            - "ALL"
-        capAdd:                          # add back specific capabilities
-            - "NET_BIND_SERVICE"
-
-        # Resource limits
-        memory: "4g"
-        cpus: "2.0"
-        pidsLimit: 256
-
-        # Security
-        seccomp: "/path/to/profile.json"
-        apparmor: "nest-profile"
-        noNewPrivileges: true            # default: true
-
-        # Extra
-        env:
-            SOME_VAR: "value"
-        args:                            # raw docker flags
-            - "--gpus=all"
-```
+- **Persistent nix store** — survives container rebuilds via named volume
+- **LAN isolation** — iptables rules in entrypoint.sh, configurable via `NEST_LAN_ALLOW` env var
+- **Rootless Docker** — `user: "0:0"` maps container root to host user safely
 
 ### Attach
 
