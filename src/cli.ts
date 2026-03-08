@@ -117,7 +117,7 @@ function printHelp(): void {
 
   Options:
     -w, --workspace <name|path>          Select workspace
-    -s, --session <name|new|resume>      Select session, or "new"/"resume" for attach
+    -s, --session <name>                 Select session (for attach)
     -c, --config <path>                  Explicit config file path
     -h, --help                           Show this help
     -v, --version                        Show version
@@ -126,10 +126,8 @@ function printHelp(): void {
     nest init                            Create workspace (default: ~/.nest/<name>/)
     nest init wren                       Create workspace with name hint
     nest -w wren start                   Start named workspace
-    nest -w wren attach                  Attach TUI (continue conversation)
-    nest -w wren -s new attach           Start fresh conversation
-    nest -w wren -s resume attach        Pick from conversation list
-    nest -w wren -s background attach    Attach to a different session
+    nest -w wren attach                  Attach TUI to default session
+    nest -w wren -s background attach    Attach TUI to specific session
 
   Workspaces:
     A workspace is a self-contained directory:
@@ -462,13 +460,9 @@ async function cmdAttach(args: ParsedArgs): Promise<void> {
     const configPath = join(ws.path, "config.yaml");
     const config = loadConfig(configPath);
 
-    // Resolve which session to attach to
-    // "new" and "resume" are modes, not session names
+    // Resolve which nest session to attach to
     const sessionNames = Object.keys(config.sessions);
-    const reservedModes = ["new", "resume"];
-    const sessionName = (args.session && !reservedModes.includes(args.session))
-        ? args.session
-        : (config.defaultSession ?? sessionNames[0]);
+    const sessionName = args.session ?? config.defaultSession ?? sessionNames[0];
 
     if (!config.sessions[sessionName]) {
         console.error(`Error: session "${sessionName}" not found`);
@@ -480,24 +474,9 @@ async function cmdAttach(args: ParsedArgs): Promise<void> {
     const agentDir = sessionConfig.pi.agentDir ?? config.instance?.agentDir;
     const cwd = sessionConfig.pi.cwd;
 
-    // Build pi args based on -s flag:
-    //   -s <name>     → continue named session (default session if omitted)
-    //   -s new        → start a fresh conversation
-    //   -s resume     → pick from session list
-    const piArgs: string[] = [];
-    const sessionArg = args.session;
-    let mode: string;
-
-    if (sessionArg === "new") {
-        // Fresh session — pi's default without --continue
-        mode = "new session";
-    } else if (sessionArg === "resume") {
-        piArgs.push("--resume");
-        mode = "resume";
-    } else {
-        piArgs.push("--continue");
-        mode = "continue";
-    }
+    // Always --continue: resumes last conversation if one exists,
+    // starts fresh if none. Once in the TUI, use /new or /resume.
+    const piArgs = ["--continue"];
 
     // Add extensions
     if (sessionConfig.pi.extensions) {
@@ -512,11 +491,12 @@ async function cmdAttach(args: ParsedArgs): Promise<void> {
         env.PI_CODING_AGENT_DIR = resolve(ws.path, agentDir);
     }
 
-    console.log(`Attaching to session "${sessionName}" (${mode})`);
+    console.log(`Attaching to session "${sessionName}"`);
     console.log(`  cwd: ${cwd}`);
     if (agentDir) {
         console.log(`  agent dir: ${resolve(ws.path, agentDir)}`);
     }
+    console.log(`  Use /new or /resume in the TUI to manage conversations`);
     console.log();
 
     // Spawn pi in interactive mode with inherited stdio (full TUI)
