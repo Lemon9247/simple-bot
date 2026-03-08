@@ -275,7 +275,8 @@ export class Kernel {
             const isPrompt: boolean = body.prompt === true;
 
             if (isPrompt) {
-                const replyOrigin = body.origin as { platform: string; channel: string } | undefined;
+                const replyOrigin = body.origin as { platform: string; channel: string } | undefined
+                    ?? sm.getActiveOrigin(sessionName) ?? undefined;
                 const listeners = sm.getListeners(sessionName);
                 let responded = false;
 
