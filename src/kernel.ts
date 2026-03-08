@@ -294,13 +294,18 @@ export class Kernel {
 
                 if (target?.listener.sendPrompt) {
                     try {
-                        const result = await target.listener.sendPrompt(target.origin, block, timeoutMs);
+                        // Use the request's origin (real channel ID) over the binding origin (may be wildcard)
+                        const promptOrigin: MessageOrigin = replyOrigin
+                            ? { platform: replyOrigin.platform, channel: replyOrigin.channel }
+                            : target.origin;
+                        const result = await target.listener.sendPrompt(promptOrigin, block, timeoutMs);
                         if (!responded) {
                             responded = true;
                             clearTimeout(timeout);
                             server.json(res, 200, { ok: true, ...result });
                         }
-                    } catch {
+                    } catch (err) {
+                        logger.error("Prompt failed", { error: String(err), listener: target.listener.name });
                         if (!responded) {
                             responded = true;
                             clearTimeout(timeout);
