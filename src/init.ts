@@ -357,7 +357,7 @@ function buildConfig(state: WizardState): Record<string, unknown> {
 
     // Tracking
     config.tracking = {
-        usageLog: "./usage.jsonl",
+        usageLog: "./.usage.jsonl",
         capacity: 1000,
         retentionDays: 30,
     };
@@ -1055,8 +1055,8 @@ function writeOutput(state: WizardState): void {
 
     // 5. Create usage log directory
     const usageDir = resolve(configDir);
-    if (!existsSync(join(usageDir, "usage.jsonl"))) {
-        writeFileSync(join(usageDir, "usage.jsonl"), "", "utf-8");
+    if (!existsSync(join(usageDir, ".usage.jsonl"))) {
+        writeFileSync(join(usageDir, ".usage.jsonl"), "", "utf-8");
     }
 
     // 6. Docker sandbox files
