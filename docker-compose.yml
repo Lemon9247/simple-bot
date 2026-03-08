@@ -2,26 +2,37 @@ services:
     nest:
         build: .
         restart: unless-stopped
-        user: "0:0"
+        user: "0:0"  # rootless Docker: maps to host user
         cap_add:
-            - NET_ADMIN  # for iptables LAN blocking in entrypoint
+            - NET_ADMIN  # for iptables in entrypoint
+        cap_drop:
+            - SYS_PTRACE
+        security_opt:
+            - no-new-privileges:true
         ports:
             - "8484:8484"
+        extra_hosts:
+            - "host.docker.internal:192.168.1.190"
         networks:
-            - isolated
+            isolated:
+            shared-services:
         volumes:
             - ./config.yaml:/config/config.yaml:ro
-            - ./plugins:/app/plugins      # Live plugin directory
-            - ./home:/home/wren           # Persistent home
-            - nix-store:/nix              # Persistent Nix store (optional)
+            - ../home:/home/wren
+            - ../home/plugins:/app/plugins
+            - ~/Documents/Obsidian/Claude:/hades:ro
+            - nix-store:/nix
         environment:
             - HOME=/home/wren
+            - NEST_LAN_ALLOW=172.30.0.10
         env_file:
             - .env
 
 networks:
     isolated:
         driver: bridge
+    shared-services:
+        external: true
 
 volumes:
     nix-store:

@@ -130,6 +130,11 @@ export interface TrackingConfig {
 // workspace directory. `nest init` generates these files.
 // This type exists only so the kernel can detect sandbox mode.
 
+export interface AttachConfig {
+    cwd?: string;               // host-side cwd (overrides session pi.cwd for TUI)
+    agentDir?: string;          // host-side agent dir (overrides instance.agentDir for TUI)
+}
+
 export interface InstanceConfig {
     name: string;
     dataDir?: string;
@@ -145,6 +150,7 @@ export interface Config {
     server?: ServerConfig;
     cron?: CronConfig;
     tracking?: TrackingConfig;
+    attach?: AttachConfig;      // host-side overrides for `nest attach` (Docker deployments)
     // Plugins read their own sections from here.
     // The kernel doesn't validate plugin config.
     [key: string]: unknown;

@@ -461,13 +461,18 @@ async function cmdAttach(args: ParsedArgs): Promise<void> {
         sessionConfig = { ...defaultConfig };
         console.log(`Creating new session "${sessionName}" (based on "${defaultName}")`);
     }
-    const agentDir = sessionConfig.pi.agentDir ?? config.instance?.agentDir;
-    const cwd = sessionConfig.pi.cwd;
+
+    // For Docker deployments, config paths are container-side.
+    // The `attach` section provides host-side overrides so the TUI
+    // can run locally while sharing session state with the container.
+    const attachConfig = config.attach;
+    const agentDir = attachConfig?.agentDir ?? sessionConfig.pi.agentDir ?? config.instance?.agentDir;
+    const cwd = attachConfig?.cwd ?? sessionConfig.pi.cwd;
 
     // --continue resumes last conversation if one exists, starts fresh if none.
     // --session-dir isolates conversations per nest session.
     // Once in the TUI, use /new or /resume to manage conversations.
-    const agentDirResolved = agentDir ? resolve(ws.path, agentDir) : undefined;
+    const agentDirResolved = agentDir ? resolve(agentDir) : undefined;
     const sessionDir = agentDirResolved
         ? join(agentDirResolved, "sessions", sessionName)
         : undefined;
@@ -489,14 +494,14 @@ async function cmdAttach(args: ParsedArgs): Promise<void> {
 
     // Build env
     const env: Record<string, string | undefined> = { ...process.env };
-    if (agentDir) {
-        env.PI_CODING_AGENT_DIR = resolve(ws.path, agentDir);
+    if (agentDirResolved) {
+        env.PI_CODING_AGENT_DIR = agentDirResolved;
     }
 
     console.log(`Attaching to session "${sessionName}"`);
     console.log(`  cwd: ${cwd}`);
-    if (agentDir) {
-        console.log(`  agent dir: ${resolve(ws.path, agentDir)}`);
+    if (agentDirResolved) {
+        console.log(`  agent dir: ${agentDirResolved}`);
     }
     console.log(`  Use /new or /resume in the TUI to manage conversations`);
     console.log();
