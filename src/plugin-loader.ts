@@ -1,18 +1,42 @@
 import { readdir, stat } from "node:fs/promises";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import { createJiti } from "jiti";
 import type { NestAPI, NestPlugin } from "./types.js";
 import * as logger from "./logger.js";
 
 const __srcDir = dirname(fileURLToPath(import.meta.url));
 const __projectDir = resolve(__srcDir, "..");
+const require = createRequire(import.meta.url);
 
-/** Build jiti aliases so plugins can `import type ... from "nest"`. */
+/**
+ * Build jiti aliases so plugins can import from "nest" and use
+ * any npm dependency installed in nest's node_modules.
+ *
+ * Type imports (`import type { ... } from "nest"`) are erased at
+ * runtime. The alias exists so jiti can resolve it if needed.
+ *
+ * npm deps (ws, discord.js, etc.) are aliased to their resolved
+ * entry points so plugins work from any location on disk.
+ */
 function buildAliases(): Record<string, string> {
-    return {
+    const aliases: Record<string, string> = {
         "nest": resolve(__srcDir, "types.ts"),
     };
+
+    // Resolve nest's npm dependencies so plugins can import them
+    // from anywhere without needing their own node_modules.
+    const deps = ["ws", "discord.js"];
+    for (const dep of deps) {
+        try {
+            aliases[dep] = dirname(require.resolve(`${dep}/package.json`));
+        } catch {
+            // Not installed — skip
+        }
+    }
+
+    return aliases;
 }
 
 /**
