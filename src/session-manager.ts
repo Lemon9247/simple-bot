@@ -1,9 +1,21 @@
 import { EventEmitter } from "node:events";
-import { join, resolve } from "node:path";
+import { join, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Bridge } from "./bridge.js";
 import type { BridgeOptions } from "./bridge.js";
 import type { Config, SessionConfig, SessionState, Listener, MessageOrigin, Block } from "./types.js";
 import * as logger from "./logger.js";
+
+const __srcDir = dirname(fileURLToPath(import.meta.url));
+const BUILTIN_EXT_DIR = resolve(__srcDir, "extensions");
+
+/** Resolve "builtin:name" extension paths to the actual source file. */
+function resolveExtensionPath(ext: string): string {
+    if (ext.startsWith("builtin:")) {
+        return resolve(BUILTIN_EXT_DIR, ext.slice("builtin:".length) + ".ts");
+    }
+    return ext;
+}
 
 interface ListenerBinding {
     listener: Listener;
@@ -31,7 +43,7 @@ export class SessionManager extends EventEmitter {
     private bridgeFactory: (opts: BridgeOptions) => Bridge;
     private instanceAgentDir?: string;
     private config: Config;
-    private nestContext?: string;
+    private nestContextBuilder?: () => string;
 
     constructor(config: Config, bridgeFactory?: (opts: BridgeOptions) => Bridge) {
         super();
@@ -54,11 +66,11 @@ export class SessionManager extends EventEmitter {
     }
 
     /**
-     * Set the dynamic system prompt context to append when starting sessions.
-     * Called by the kernel after plugins load and listeners connect.
+     * Register a builder that generates the system prompt context on demand.
+     * Called each time a session starts, so it always reflects current state.
      */
-    setNestContext(context: string): void {
-        this.nestContext = context;
+    setNestContextBuilder(builder: () => string): void {
+        this.nestContextBuilder = builder;
     }
 
     // ─── Session Lifecycle ────────────────────────────────────
@@ -108,18 +120,26 @@ export class SessionManager extends EventEmitter {
         const agentDir = info.config.pi.agentDir ?? this.instanceAgentDir;
         const baseArgs = info.config.pi.args ?? ["--mode", "rpc", "--continue"];
         const args = [...baseArgs];
+
+        // Add configured extensions (resolving builtin: prefixes)
+        if (info.config.pi.extensions) {
+            for (const ext of info.config.pi.extensions) {
+                args.push("-e", resolveExtensionPath(ext));
+            }
+        }
         if (agentDir && !args.some((a) => a === "--session-dir")) {
             args.push("--session-dir", join(resolve(agentDir), "sessions", name));
         }
 
-        // Append dynamic nest context to the system prompt.
-        // If the session already has --append-system-prompt, concatenate.
-        if (this.nestContext) {
+        // Build and append dynamic nest context to the system prompt.
+        // Rebuilt on each session start so it reflects current state.
+        if (this.nestContextBuilder) {
+            const nestContext = this.nestContextBuilder();
             const existingIdx = args.indexOf("--append-system-prompt");
             if (existingIdx !== -1 && existingIdx + 1 < args.length) {
-                args[existingIdx + 1] += "\n\n" + this.nestContext;
+                args[existingIdx + 1] += "\n\n---\n\n" + nestContext;
             } else {
-                args.push("--append-system-prompt", this.nestContext);
+                args.push("--append-system-prompt", nestContext);
             }
         }
 

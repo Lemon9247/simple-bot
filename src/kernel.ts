@@ -491,7 +491,9 @@ export class Kernel {
             : "none";
 
         // Commands
-        const cmdList = Array.from(this.commands.keys()).join(", ");
+        const cmdList = this.commands.size > 0
+            ? Array.from(this.commands.keys()).join(", ")
+            : "none";
 
         // Resolve paths relative to this source file
         const srcDir = dirname(fileURLToPath(import.meta.url));
@@ -581,17 +583,17 @@ export class Kernel {
             this.registerCommandRoutes();
         }
 
+        // Register the context builder before connecting listeners so that
+        // any session started by an early incoming message gets the prompt.
+        // The builder runs on each session start, so it always reflects
+        // current state (listeners, plugins, commands).
+        this.sessionManager.setNestContextBuilder(() => this.buildNestContext());
+
         // Connect all registered listeners
         for (const listener of this.listeners) {
             listener.onMessage((msg) => this.handleMessage(msg));
             await listener.connect();
         }
-
-        // Build and inject dynamic system prompt context now that
-        // plugins are loaded and listeners are connected.
-        const nestContext = this.buildNestContext();
-        this.sessionManager.setNestContext(nestContext);
-        logger.info("Nest context built", { length: nestContext.length });
 
         // Start scheduler if configured
         if (this.config.cron) {

@@ -18,9 +18,19 @@
  */
 
 import { dirname, resolve, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { spawnSync } from "node:child_process";
+
+const __srcDir = dirname(fileURLToPath(import.meta.url));
+
+function resolveExtensionPath(ext: string): string {
+    if (ext.startsWith("builtin:")) {
+        return resolve(__srcDir, "extensions", ext.slice("builtin:".length) + ".ts");
+    }
+    return ext;
+}
 
 // ─── Workspace Registry ─────────────────────────────────────
 
@@ -400,7 +410,7 @@ async function startBareMetal(
         const bridgeArgs = [...(opts.args ?? ["--mode", "rpc", "--continue"])];
         if (extensions) {
             for (const ext of extensions) {
-                bridgeArgs.push("-e", ext);
+                bridgeArgs.push("-e", resolveExtensionPath(ext));
             }
         }
 

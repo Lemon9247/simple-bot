@@ -93,28 +93,38 @@ describe("SessionManager", () => {
     });
 
     describe("nestContext", () => {
-        it("appends --append-system-prompt when context is set", async () => {
-            sm.setNestContext("## Nest Environment\ntest context");
-            await sm.getOrStartSession("main");
-            const args = mockBridge.start.mock.calls.length > 0
-                ? (sm as any).sessions.get("main")?.config.pi.args
-                : undefined;
-            // The bridge factory receives args including the appended prompt
-            // We verify by checking the factory was called with args containing the flag
-            const factoryArgs = (sm as any).bridgeFactory;
-            // Re-create to capture args
+        it("appends --append-system-prompt when builder is set", async () => {
             const capturedArgs: any[] = [];
             const sm2 = new SessionManager(makeConfig(), (opts) => {
                 capturedArgs.push(opts);
                 return makeMockBridge();
             });
-            sm2.setNestContext("## Nest Environment\ntest context");
+            sm2.setNestContextBuilder(() => "## Nest Environment\ntest context");
             await sm2.getOrStartSession("main");
             expect(capturedArgs).toHaveLength(1);
             const bridgeArgs = capturedArgs[0].args as string[];
             const idx = bridgeArgs.indexOf("--append-system-prompt");
             expect(idx).toBeGreaterThan(-1);
             expect(bridgeArgs[idx + 1]).toContain("## Nest Environment");
+        });
+
+        it("rebuilds context on each session start", async () => {
+            let callCount = 0;
+            const capturedArgs: any[] = [];
+            const sm2 = new SessionManager(makeConfig(), (opts) => {
+                capturedArgs.push(opts);
+                return makeMockBridge();
+            });
+            sm2.setNestContextBuilder(() => `context-${++callCount}`);
+            await sm2.getOrStartSession("main");
+            // Stop and restart to verify rebuild
+            await sm2.stopSession("main");
+            await sm2.getOrStartSession("main");
+            expect(callCount).toBe(2);
+            const args1 = capturedArgs[0].args as string[];
+            const args2 = capturedArgs[1].args as string[];
+            expect(args1[args1.indexOf("--append-system-prompt") + 1]).toContain("context-1");
+            expect(args2[args2.indexOf("--append-system-prompt") + 1]).toContain("context-2");
         });
 
         it("concatenates with existing --append-system-prompt", async () => {
@@ -129,7 +139,7 @@ describe("SessionManager", () => {
                 capturedArgs.push(opts);
                 return makeMockBridge();
             });
-            sm2.setNestContext("nest addition");
+            sm2.setNestContextBuilder(() => "nest addition");
             await sm2.getOrStartSession("main");
             const bridgeArgs = capturedArgs[0].args as string[];
             const idx = bridgeArgs.indexOf("--append-system-prompt");
@@ -137,7 +147,7 @@ describe("SessionManager", () => {
             expect(bridgeArgs[idx + 1]).toContain("nest addition");
         });
 
-        it("skips prompt injection when no context set", async () => {
+        it("skips prompt injection when no builder set", async () => {
             const capturedArgs: any[] = [];
             const sm2 = new SessionManager(makeConfig(), (opts) => {
                 capturedArgs.push(opts);
@@ -146,6 +156,31 @@ describe("SessionManager", () => {
             await sm2.getOrStartSession("main");
             const bridgeArgs = capturedArgs[0].args as string[];
             expect(bridgeArgs).not.toContain("--append-system-prompt");
+        });
+
+        it("resolves builtin: extension paths", async () => {
+            const config = makeConfig({
+                sessions: {
+                    main: { pi: { cwd: "/tmp", extensions: ["builtin:nest", "builtin:ui", "/custom/ext.ts"] } },
+                    background: { pi: { cwd: "/tmp" } },
+                },
+            });
+            const capturedArgs: any[] = [];
+            const sm2 = new SessionManager(config, (opts) => {
+                capturedArgs.push(opts);
+                return makeMockBridge();
+            });
+            await sm2.getOrStartSession("main");
+            const bridgeArgs = capturedArgs[0].args as string[];
+            // Find all -e flags
+            const extPaths: string[] = [];
+            for (let i = 0; i < bridgeArgs.length; i++) {
+                if (bridgeArgs[i] === "-e") extPaths.push(bridgeArgs[i + 1]);
+            }
+            expect(extPaths).toHaveLength(3);
+            expect(extPaths[0]).toContain("extensions/nest.ts");
+            expect(extPaths[1]).toContain("extensions/ui.ts");
+            expect(extPaths[2]).toBe("/custom/ext.ts");
         });
     });
 

@@ -591,10 +591,11 @@ async function stepSession(): Promise<{ name: string; extensions: string[] }> {
         }),
     );
 
-    // Offer built-in extensions (nest tools + block protocol UI)
-    const builtinExtDir = resolve(__dirname, "extensions");
-    const builtinNest = resolve(builtinExtDir, "nest.ts");
-    const builtinUi = resolve(builtinExtDir, "ui.ts");
+    // Offer built-in extensions (nest tools + block protocol UI).
+    // Use "builtin:" prefix — resolved by the session manager at runtime
+    // so config.yaml survives installation moves and Docker deployments.
+    const builtinNest = "builtin:nest";
+    const builtinUi = "builtin:ui";
 
     const useBuiltins = guard(
         await p.confirm({

@@ -2,13 +2,13 @@
  * TUI client for `nest attach` — renders chat using pi-tui components.
  *
  * Layout:
- *   ┌─────────────────────────────┐
+ *   ┌──────────────────────────────┐
  *   │  scrollable message history  │
  *   │  ...                         │
  *   │  wren: response text         │
- *   ├─────────────────────────────┤
+ *   ├──────────────────────────────┤
  *   │  > input                     │
- *   └─────────────────────────────┘
+ *   └──────────────────────────────┘
  */
 
 import {
