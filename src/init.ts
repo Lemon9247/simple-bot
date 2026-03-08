@@ -293,6 +293,7 @@ function mergeModelsJson(
 
 interface WizardState {
     workDir: string;
+    agentDir: string;
     provider: Provider;
     apiKey?: string;
     customBaseUrl?: string;
@@ -322,6 +323,7 @@ function buildConfig(state: WizardState): Record<string, unknown> {
         name: "nest",
         dataDir: ".",
         pluginsDir: "./plugins",
+        agentDir: state.agentDir,
     };
 
     // Sessions
@@ -381,7 +383,7 @@ function buildConfig(state: WizardState): Record<string, unknown> {
 
 // ─── Wizard Steps ───────────────────────────────────────────
 
-async function stepWorkspace(): Promise<string> {
+async function stepWorkspace(): Promise<{ workDir: string; agentDir: string }> {
     const cwd = guard(
         await p.text({
             message: "Working directory for the agent",
@@ -392,7 +394,22 @@ async function stepWorkspace(): Promise<string> {
             },
         }),
     );
-    return resolve(cwd);
+    const workDir = resolve(cwd);
+
+    // Nest gets its own agent dir — never touches ~/.pi/agent/
+    const defaultAgentDir = resolve(process.cwd(), ".nest");
+    const agentDir = guard(
+        await p.text({
+            message: "Nest agent directory (models, sessions, settings — separate from pi)",
+            initialValue: defaultAgentDir,
+            validate: (v = "") => {
+                if (!v.trim()) return "Required";
+                return undefined;
+            },
+        }),
+    );
+
+    return { workDir, agentDir: resolve(agentDir) };
 }
 
 async function stepProvider(): Promise<{
@@ -817,10 +834,9 @@ function writeOutput(state: WizardState): void {
     writeFileSync(configPath, configYaml, "utf-8");
     p.log.success(`${configExisted ? "Updated" : "Written"}: config.yaml`);
 
-    // 2. Write models.json
-    const modelsDir = resolve(process.env.HOME ?? "~", ".pi", "agent");
-    mkdirSync(modelsDir, { recursive: true });
-    const modelsPath = join(modelsDir, "models.json");
+    // 2. Write models.json to nest's own agent dir (doesn't touch ~/.pi/agent/)
+    mkdirSync(state.agentDir, { recursive: true });
+    const modelsPath = join(state.agentDir, "models.json");
     const modelsJson = buildModelsJson(
         state.provider,
         state.apiKey,
@@ -841,7 +857,7 @@ function writeOutput(state: WizardState): void {
     }
 
     writeFileSync(modelsPath, JSON.stringify(finalModels, null, 2) + "\n", "utf-8");
-    p.log.success(`Written: ${modelsPath}`);
+    p.log.success(`Written: ${modelsPath} (isolated from ~/.pi/agent/)`);
 
     // 3. Seed plugins directory
     const pluginsDir = join(configDir, "plugins");
@@ -903,7 +919,7 @@ async function main() {
 
     // Step 1: Workspace
     p.log.step("Workspace");
-    const workDir = await stepWorkspace();
+    const { workDir, agentDir } = await stepWorkspace();
 
     // Step 2: Model provider
     p.log.step("Model Provider");
@@ -928,6 +944,7 @@ async function main() {
     // Build state and write output
     const state: WizardState = {
         workDir,
+        agentDir,
         provider,
         apiKey,
         customBaseUrl,
@@ -950,6 +967,7 @@ async function main() {
         `Provider:  ${provider.name}`,
         `Session:   ${session.name}`,
         `Workspace: ${workDir}`,
+        `Agent dir: ${agentDir}`,
     ];
     if (listeners.enableDiscord) {
         summaryLines.push(`Discord:   ${Object.keys(listeners.discordChannels).length} channel(s)`);

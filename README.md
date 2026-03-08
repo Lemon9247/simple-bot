@@ -350,7 +350,9 @@ The wizard walks through:
 5. **HTTP server** — port and auto-generated auth token
 6. **Cron** — scheduler directory
 
-Output: `config.yaml`, `~/.pi/agent/models.json`, seeded `plugins/` directory.
+Output: `config.yaml`, `.nest/models.json`, seeded `plugins/` directory.
+
+Nest uses its own agent directory (default `.nest/`) for `models.json`, sessions, and settings — it never touches `~/.pi/agent/`. This means you can run pi standalone alongside nest without config conflicts. The isolation is handled via `PI_CODING_AGENT_DIR` which nest sets when spawning pi processes.
 
 Supports all pi backends: Anthropic, OpenAI, Google Gemini, Google Vertex AI, Amazon Bedrock, Azure OpenAI, OpenRouter, Groq, xAI, Mistral, and any OpenAI-compatible endpoint (Ollama, vLLM, LM Studio).
 

@@ -96,6 +96,7 @@ export interface SessionConfig {
         command?: string;
         args?: string[];
         extensions?: string[];
+        agentDir?: string;
     };
     idleTimeoutMinutes?: number;
 }
@@ -125,6 +126,7 @@ export interface InstanceConfig {
     name: string;
     dataDir?: string;
     pluginsDir?: string;
+    agentDir?: string;
 }
 
 export interface Config {

@@ -5,6 +5,7 @@ instance:
     name: "nest"
     dataDir: "."
     pluginsDir: "./plugins"
+    agentDir: "./.nest"    # pi agent dir (models, sessions) — isolated from ~/.pi/agent/
 
 # ─── Sessions ───────────────────────────────────────────────
 # Sessions are independent pi processes. Listeners attach to them.

@@ -8,7 +8,7 @@ import * as logger from "./logger.js";
 const configPath = process.argv[2] ?? "config.yaml";
 const config = loadConfig(configPath);
 
-// Bridge factory — injects extension flags
+// Bridge factory — injects extension flags and agent dir
 function createBridge(opts: BridgeOptions): Bridge {
     const sessionConfig = Object.values(config.sessions).find(
         (s) => s.pi.cwd === opts.cwd,
@@ -22,7 +22,19 @@ function createBridge(opts: BridgeOptions): Bridge {
         }
     }
 
-    return new Bridge({ cwd: opts.cwd, command: opts.command, args });
+    // Resolve agent dir: session-level > instance-level > undefined (pi default)
+    const agentDir = sessionConfig?.pi.agentDir ?? config.instance?.agentDir;
+    const env: Record<string, string> = {};
+    if (agentDir) {
+        env.PI_CODING_AGENT_DIR = agentDir;
+    }
+
+    return new Bridge({
+        cwd: opts.cwd,
+        command: opts.command,
+        args,
+        ...(Object.keys(env).length > 0 ? { env } : {}),
+    });
 }
 
 const sessionManager = new SessionManager(config, createBridge);
