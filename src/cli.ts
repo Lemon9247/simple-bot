@@ -27,7 +27,7 @@ const __srcDir = dirname(fileURLToPath(import.meta.url));
 
 function resolveExtensionPath(ext: string): string {
     if (ext.startsWith("builtin:")) {
-        return resolve(__srcDir, "extensions", ext.slice("builtin:".length) + ".ts");
+        return resolve(__srcDir, "..", "extensions", ext.slice("builtin:".length) + ".ts");
     }
     return ext;
 }

@@ -7,7 +7,7 @@ import type { Config, SessionConfig, SessionState, Listener, MessageOrigin, Bloc
 import * as logger from "./logger.js";
 
 const __srcDir = dirname(fileURLToPath(import.meta.url));
-const BUILTIN_EXT_DIR = resolve(__srcDir, "extensions");
+const BUILTIN_EXT_DIR = resolve(__srcDir, "..", "extensions");
 
 /** Resolve "builtin:name" extension paths to the actual source file. */
 function resolveExtensionPath(ext: string): string {

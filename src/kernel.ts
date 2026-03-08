@@ -566,7 +566,7 @@ export class Kernel {
         const pluginsDir = inst?.pluginsDir
             ? resolve(inst.pluginsDir)
             : resolve(projectDir, "plugins");
-        const extensionsDir = resolve(srcDir, "extensions");
+        const extensionsDir = resolve(projectDir, "extensions");
         const typesPath = resolve(srcDir, "types.ts");
         const readmePath = resolve(projectDir, "README.md");
 
