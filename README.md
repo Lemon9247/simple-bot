@@ -90,8 +90,8 @@ graph TB
     end
 
     subgraph Plugins["PLUGINS"]
+        CLI["cli.ts (WebSocket)"]
         Discord["discord.ts"]
-        Matrix["matrix.ts"]
         Dashboard["dashboard.ts"]
         Webhook["webhook.ts"]
         Commands["commands.ts"]
@@ -139,9 +139,9 @@ graph TB
 - **Sessions are independent pi processes** with their own conversation history
 - **Listeners attach to sessions** — Discord, CLI, webhook are all views into a session
 - **Multiple listeners on one session** — CLI and Discord both see the same conversation
-- **Cron jobs target sessions** — no notify channels, output goes to all attached listeners
+- **Cron jobs target sessions** — output routes to listeners named in `cron.notify` (or per-job `notify`), not all attached listeners
 
-## Message Flow
+## Message Routing
 
 ```mermaid
 sequenceDiagram
@@ -157,14 +157,53 @@ sequenceDiagram
     MW->>K: process(msg)
     K->>B: sendMessage()
     B->>Pi: JSON-RPC
-    Pi-->>B: streaming response
+    Pi-->>B: text_delta (streaming)
+    B-->>K: onText callback
+    K-->>L: broadcast (kind=stream)
+    Pi-->>B: tool call
+    B-->>K: onToolStart callback
+    K-->>L: broadcast (kind=tool)
+    Pi-->>B: final response
     B-->>K: response text
-    K-->>L: broadcast to ALL attached listeners
+    K-->>L: broadcast (kind=text)
     L-->>P: Display
 
     Note over MW: Can block (return null)
     Note over K,L: All listeners on the session see output
 ```
+
+### Wildcard Channels
+
+Listeners can attach to a session with `channel: "*"` (wildcard), meaning "all channels on this platform." When the kernel broadcasts a response, it resolves wildcards:
+
+- **Same platform** — the wildcard resolves to the actual channel the message came from
+- **Different platform** — the broadcast is skipped (e.g. a CLI message won't route to a Discord wildcard)
+- **No origin** (cron, webhook) — wildcards are skipped; use `notifyOrigin()` instead
+
+### Broadcast Kinds
+
+Each broadcast carries a `kind` tag so listeners can handle different event types:
+
+| Kind | Meaning | CLI renders as |
+|------|---------|---------------|
+| `"stream"` | Streaming text delta (partial response) | Updates response in-place |
+| `"tool"` | Tool call summary (e.g. "Reading file.ts") | Separate tool block |
+| `"text"` | Final complete response | Full response display |
+
+### Cron Notify
+
+Cron output doesn't go through normal broadcast. Instead, each job (or the global `cron` config) specifies a `notify` field — a comma-separated list of platform names. The kernel calls `notifyOrigin()` on each named listener to get the target channel.
+
+```yaml
+cron:
+    dir: ./cron.d
+    notify: discord            # all jobs notify Discord by default
+
+# Per-job override in cron.d/morning.md frontmatter:
+# notify: discord, matrix
+```
+
+Each listener plugin decides where notifications go via `notifyOrigin()`. The Discord plugin reads `discord.notify` (a channel ID) from config.
 
 ## Plugins
 
@@ -190,6 +229,7 @@ Plugins register capabilities through the `NestAPI` object:
 | `registerCommand(name, command)` | Bot command (`bot!name args`) |
 | `registerRoute(method, path, handler)` | HTTP endpoint on the nest server |
 | `registerPrefixRoute(method, prefix, handler)` | Wildcard HTTP route (e.g. `/dashboard/*`) |
+| `registerUpgrade(path, handler)` | WebSocket upgrade handler on a path (e.g. `/cli`) |
 | `on(event, handler)` | Lifecycle hook (message_in, message_out, session_start, session_stop, shutdown) |
 | `sessions.attach(session, listener, origin)` | Bind a listener to a session so it receives all output |
 
@@ -203,6 +243,7 @@ interface NestAPI {
     registerCommand(name: string, command: Command): void;
     registerRoute(method: string, path: string, handler: RouteHandler): void;
     registerPrefixRoute(method: string, prefix: string, handler: RouteHandler): void;
+    registerUpgrade(path: string, handler: (req, socket, head) => void): void;
     on(event: string, handler: (...args: any[]) => void): void;
 
     // --- Sessions ---
@@ -245,8 +286,10 @@ interface Listener {
     connect(): Promise<void>;
     disconnect(): Promise<void>;
     onMessage(handler: (msg: IncomingMessage) => void): void;
-    send(origin: MessageOrigin, text: string, files?: OutgoingFile[]): Promise<void>;
+    send(origin: MessageOrigin, text: string, files?: OutgoingFile[],
+         kind?: "text" | "tool" | "stream"): Promise<void>;
     sendTyping?(origin: MessageOrigin): Promise<void>;
+    notifyOrigin?(): MessageOrigin | null;  // where to send cron/system output
 }
 ```
 
@@ -282,6 +325,9 @@ sessions:
 # Plugin config (passed through, not validated by kernel)
 discord:
     token: "env:DISCORD_TOKEN"
+    notify: "123456"               # channel for cron/system notifications
+    allowed_users:                  # only these users can interact (omit = allow all)
+        - "willow"
     channels:
         "123456": "wren"
 
@@ -368,8 +414,8 @@ The approval gate is the reboot, not the writing. The agent builds its own nervo
 
 | Plugin | Lines | What it does |
 |--------|-------|-------------|
-| `discord.ts` | 175 | Discord listener with emoji resolution, attachments, channel-to-session mapping |
-| `matrix.ts` | 101 | Matrix listener with room-to-session mapping |
+| `cli.ts` | 215 | WebSocket listener for `nest attach` — TUI clients connect here |
+| `discord.ts` | 193 | Discord listener with emoji resolution, attachments, user filtering, channel-to-session mapping |
 | `dashboard.ts` | 133 | API routes (status, sessions, usage, logs) + optional static file serving |
 | `webhook.ts` | 108 | `POST /api/webhook` — send a message to a session, get a response |
 | `commands.ts` | 91 | Extended bot commands: model, think, compress, new, reload |
@@ -393,15 +439,23 @@ defaultSession: wren
 server:
     port: 8484
     token: "env:SERVER_TOKEN"
+    host: "127.0.0.1"
 
 cron:
     dir: ./cron.d
+    notify: discord            # comma-separated platform names for cron output
+
+attach:
+    host: 127.0.0.1            # WebSocket host for `nest attach` (useful for Docker)
 
 # Plugin config — plugins read their own sections
 discord:
     token: "env:DISCORD_TOKEN"
+    notify: "123456"           # channel ID for cron/system notifications
+    allowed_users:              # restrict who can interact (omit = allow all)
+        - "willow"
     channels:
-        "123456": "wren"
+        "123456": "wren"       # channel → session mapping
 ```
 
 ## CLI
@@ -478,12 +532,16 @@ Features:
 
 ### Attach
 
-`nest attach` spawns pi in interactive TUI mode, pointed at the same session files as the running gateway. Both the gateway and the attached pi share the same conversation history.
+`nest attach` connects a full-screen TUI to the running gateway via WebSocket. The CLI plugin (`/cli` endpoint) handles the connection — the TUI is just another listener on the session, like Discord. Multiple CLI clients can connect simultaneously and all see the same output.
+
+The TUI uses pi-tui components: markdown rendering, streaming response updates, tool call blocks, and an editor for input. Authentication uses the `server.token` from config.
 
 ```bash
 nest -w wren attach              # default session
 nest -w wren -s background attach # specific session
 ```
+
+For Docker deployments, set `attach.host` in config to the container's reachable address.
 
 ## Writing Plugins
 
@@ -498,24 +556,25 @@ The agent can write plugins too — that's the point.
 
 ```
 nest/
-├── src/                    # Kernel (~3,200 lines)
+├── src/                    # Kernel
 │   ├── cli.ts              # CLI entry point (nest init/start/attach/status/list)
+│   ├── attach-tui.ts       # Full-screen TUI for nest attach (pi-tui based)
 │   ├── init.ts             # Setup wizard
 │   ├── kernel.ts           # Core orchestration
 │   ├── bridge.ts           # RPC pipe to pi
-│   ├── session-manager.ts  # Sessions (central hub)
+│   ├── session-manager.ts  # Sessions + broadcast routing
 │   ├── scheduler.ts        # Cron
 │   ├── config.ts           # YAML config
 │   ├── plugin-loader.ts    # Scan, import, inject NestAPI
-│   ├── server.ts           # HTTP skeleton
+│   ├── server.ts           # HTTP skeleton + WebSocket upgrades
 │   ├── types.ts            # All interfaces
 │   ├── tracker.ts          # Usage tracking
 │   └── ...                 # logger, chunking, image, inbox
-├── plugins/                # Features (~600 lines)
-│   ├── discord.ts
-│   ├── matrix.ts
-│   ├── dashboard.ts
-│   ├── webhook.ts
-│   └── commands.ts
+├── plugins/                # Features (~740 lines)
+│   ├── cli.ts              # WebSocket listener for TUI attach
+│   ├── discord.ts          # Discord with user filtering
+│   ├── dashboard.ts        # API routes + static files
+│   ├── webhook.ts          # HTTP webhook endpoint
+│   └── commands.ts         # Extended bot commands
 └── config.yaml
 ```
