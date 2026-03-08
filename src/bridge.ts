@@ -236,6 +236,11 @@ export class Bridge extends EventEmitter {
             const delta = event.assistantMessageEvent;
             if (delta?.type === "text_delta") {
                 this.responseText += delta.delta;
+                // Stream accumulated text to listener as it arrives
+                const current = this.responseQueue[0];
+                if (current?.onText) {
+                    current.onText(this.responseText);
+                }
             }
         }
 
