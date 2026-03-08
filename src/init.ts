@@ -591,9 +591,21 @@ async function stepSession(): Promise<{ name: string; extensions: string[] }> {
         }),
     );
 
+    // Offer built-in extensions (nest tools + block protocol UI)
+    const builtinExtDir = resolve(__dirname, "extensions");
+    const builtinNest = resolve(builtinExtDir, "nest.ts");
+    const builtinUi = resolve(builtinExtDir, "ui.ts");
+
+    const useBuiltins = guard(
+        await p.confirm({
+            message: "Enable nest tools (nest_command, nest_reboot, show_image, confirm, select)?",
+            initialValue: true,
+        }),
+    );
+
     const extInput = guard(
         await p.text({
-            message: "Pi extensions (comma-separated paths, or empty for none)",
+            message: "Additional pi extensions (comma-separated paths, or empty for none)",
             initialValue: "",
         }),
     );
@@ -602,6 +614,10 @@ async function stepSession(): Promise<{ name: string; extensions: string[] }> {
         .split(",")
         .map((e) => e.trim())
         .filter(Boolean);
+
+    if (useBuiltins) {
+        extensions.unshift(builtinNest, builtinUi);
+    }
 
     return { name, extensions };
 }

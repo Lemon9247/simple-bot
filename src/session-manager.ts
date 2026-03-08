@@ -31,6 +31,7 @@ export class SessionManager extends EventEmitter {
     private bridgeFactory: (opts: BridgeOptions) => Bridge;
     private instanceAgentDir?: string;
     private config: Config;
+    private nestContext?: string;
 
     constructor(config: Config, bridgeFactory?: (opts: BridgeOptions) => Bridge) {
         super();
@@ -50,6 +51,14 @@ export class SessionManager extends EventEmitter {
                 listeners: [],
             });
         }
+    }
+
+    /**
+     * Set the dynamic system prompt context to append when starting sessions.
+     * Called by the kernel after plugins load and listeners connect.
+     */
+    setNestContext(context: string): void {
+        this.nestContext = context;
     }
 
     // ─── Session Lifecycle ────────────────────────────────────
@@ -101,6 +110,17 @@ export class SessionManager extends EventEmitter {
         const args = [...baseArgs];
         if (agentDir && !args.some((a) => a === "--session-dir")) {
             args.push("--session-dir", join(resolve(agentDir), "sessions", name));
+        }
+
+        // Append dynamic nest context to the system prompt.
+        // If the session already has --append-system-prompt, concatenate.
+        if (this.nestContext) {
+            const existingIdx = args.indexOf("--append-system-prompt");
+            if (existingIdx !== -1 && existingIdx + 1 < args.length) {
+                args[existingIdx + 1] += "\n\n" + this.nestContext;
+            } else {
+                args.push("--append-system-prompt", this.nestContext);
+            }
         }
 
         let bridge: Bridge;

@@ -92,6 +92,63 @@ describe("SessionManager", () => {
         });
     });
 
+    describe("nestContext", () => {
+        it("appends --append-system-prompt when context is set", async () => {
+            sm.setNestContext("## Nest Environment\ntest context");
+            await sm.getOrStartSession("main");
+            const args = mockBridge.start.mock.calls.length > 0
+                ? (sm as any).sessions.get("main")?.config.pi.args
+                : undefined;
+            // The bridge factory receives args including the appended prompt
+            // We verify by checking the factory was called with args containing the flag
+            const factoryArgs = (sm as any).bridgeFactory;
+            // Re-create to capture args
+            const capturedArgs: any[] = [];
+            const sm2 = new SessionManager(makeConfig(), (opts) => {
+                capturedArgs.push(opts);
+                return makeMockBridge();
+            });
+            sm2.setNestContext("## Nest Environment\ntest context");
+            await sm2.getOrStartSession("main");
+            expect(capturedArgs).toHaveLength(1);
+            const bridgeArgs = capturedArgs[0].args as string[];
+            const idx = bridgeArgs.indexOf("--append-system-prompt");
+            expect(idx).toBeGreaterThan(-1);
+            expect(bridgeArgs[idx + 1]).toContain("## Nest Environment");
+        });
+
+        it("concatenates with existing --append-system-prompt", async () => {
+            const config = makeConfig({
+                sessions: {
+                    main: { pi: { cwd: "/tmp", args: ["--mode", "rpc", "--append-system-prompt", "existing context"] } },
+                    background: { pi: { cwd: "/tmp" } },
+                },
+            });
+            const capturedArgs: any[] = [];
+            const sm2 = new SessionManager(config, (opts) => {
+                capturedArgs.push(opts);
+                return makeMockBridge();
+            });
+            sm2.setNestContext("nest addition");
+            await sm2.getOrStartSession("main");
+            const bridgeArgs = capturedArgs[0].args as string[];
+            const idx = bridgeArgs.indexOf("--append-system-prompt");
+            expect(bridgeArgs[idx + 1]).toContain("existing context");
+            expect(bridgeArgs[idx + 1]).toContain("nest addition");
+        });
+
+        it("skips prompt injection when no context set", async () => {
+            const capturedArgs: any[] = [];
+            const sm2 = new SessionManager(makeConfig(), (opts) => {
+                capturedArgs.push(opts);
+                return makeMockBridge();
+            });
+            await sm2.getOrStartSession("main");
+            const bridgeArgs = capturedArgs[0].args as string[];
+            expect(bridgeArgs).not.toContain("--append-system-prompt");
+        });
+    });
+
     describe("broadcast", () => {
         it("sends to all attached listeners", async () => {
             const l1 = new MockListener("discord");

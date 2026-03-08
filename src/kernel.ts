@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
-import { basename } from "node:path";
+import { basename, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { EventEmitter } from "node:events";
 import { Bridge } from "./bridge.js";
 import type { ImageContent } from "./bridge.js";
@@ -467,6 +468,74 @@ export class Kernel {
 
     // ─── Boot ────────────────────────────────────────────────
 
+    // ─── Dynamic System Prompt ─────────────────────────────
+
+    buildNestContext(): string {
+        const inst = this.config.instance;
+        const name = inst?.name ?? "nest";
+        const sessions = this.sessionManager.getSessionNames();
+        const defaultSession = this.sessionManager.getDefaultSessionName();
+
+        // Listener summary: who's connected and to what session
+        const listenerLines: string[] = [];
+        for (const session of sessions) {
+            const bindings = this.sessionManager.getListeners(session);
+            for (const { listener, origin } of bindings) {
+                listenerLines.push(`- **${listener.name}** → session \`${session}\` (${origin.platform}/${origin.channel})`);
+            }
+        }
+
+        // Plugins
+        const pluginList = this.pluginNames.length > 0
+            ? this.pluginNames.join(", ")
+            : "none";
+
+        // Commands
+        const cmdList = Array.from(this.commands.keys()).join(", ");
+
+        // Resolve paths relative to this source file
+        const srcDir = dirname(fileURLToPath(import.meta.url));
+        const projectDir = resolve(srcDir, "..");
+        const pluginsDir = inst?.pluginsDir
+            ? resolve(inst.pluginsDir)
+            : resolve(projectDir, "plugins");
+        const extensionsDir = resolve(srcDir, "extensions");
+        const typesPath = resolve(srcDir, "types.ts");
+        const readmePath = resolve(projectDir, "README.md");
+
+        const lines = [
+            `## Nest Environment`,
+            ``,
+            `You are running inside nest, an agent gateway.`,
+            `Messages arrive from external platforms and responses broadcast to all listeners on your session.`,
+            ``,
+            `**Instance:** ${name} | **Session:** ${defaultSession}`,
+            ``,
+        ];
+
+        if (listenerLines.length > 0) {
+            lines.push(`### Listeners`, ...listenerLines, ``);
+        }
+
+        lines.push(
+            `### Plugins`,
+            `Loaded: ${pluginList}`,
+            ``,
+            `### Commands`,
+            `${cmdList} (call via nest_command tool)`,
+            ``,
+            `### Writing Plugins & Extensions`,
+            `- Nest overview & architecture: \`${readmePath}\``,
+            `- Plugin API reference (NestAPI, Listener, Middleware, Command): \`${typesPath}\``,
+            `- Existing plugins (working examples): \`${pluginsDir}/\``,
+            `- Existing extensions (tool examples): \`${extensionsDir}/\``,
+            `- To add a plugin: write a \`.ts\` file to \`${pluginsDir}/\`, call \`nest_reboot()\` to load`,
+            `- To add a tool: write a pi extension to \`${extensionsDir}/\`, call \`nest_reboot()\` to register`,
+        );
+
+        return lines.join("\n");
+    }
+
     async start(): Promise<void> {
         await this.tracker.loadLog();
 
@@ -517,6 +586,12 @@ export class Kernel {
             listener.onMessage((msg) => this.handleMessage(msg));
             await listener.connect();
         }
+
+        // Build and inject dynamic system prompt context now that
+        // plugins are loaded and listeners are connected.
+        const nestContext = this.buildNestContext();
+        this.sessionManager.setNestContext(nestContext);
+        logger.info("Nest context built", { length: nestContext.length });
 
         // Start scheduler if configured
         if (this.config.cron) {
