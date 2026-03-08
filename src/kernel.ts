@@ -101,6 +101,7 @@ export class Kernel {
     private listeners: Listener[] = [];
     private middlewares: Middleware[] = [];
     private commands = new Map<string, Command>();
+    private coreCommands = new Set<string>();
     private pluginNames: string[] = [];
 
     // Runtime state
@@ -178,6 +179,12 @@ export class Kernel {
     // ─── Core Commands ───────────────────────────────────────
 
     private registerCoreCommands(): void {
+        const self = this;
+        this.coreCommands.add("status");
+        this.coreCommands.add("reboot");
+        this.coreCommands.add("reload");
+        this.coreCommands.add("abort");
+
         this.commands.set("status", {
             async execute({ reply, nest }) {
                 const uptime = Math.floor((Date.now() - nest.tracker.currentContext()) / 1000);
@@ -215,6 +222,20 @@ export class Kernel {
                     await bridge.restart();
                     await reply(`✅ Session **${target}** rebooted.`);
                 }
+            },
+        });
+
+        this.commands.set("reload", {
+            interrupts: true,
+            async execute({ reply, sessionName }) {
+                await reply("🔄 Reloading all plugins...");
+                const { loaded, errors } = await self.reloadPlugins();
+                // After reload, listeners are new instances. Broadcast status
+                // to all listeners on this session so the user sees the result.
+                const status = errors.length > 0
+                    ? `⚠️ Reloaded with errors:\n${errors.join("\n")}`
+                    : `✅ Loaded ${loaded.length} plugin(s): ${loaded.join(", ")}`;
+                await self.sessionManager.broadcast(sessionName, status);
             },
         });
 
@@ -531,8 +552,10 @@ export class Kernel {
             `- Plugin API reference (NestAPI, Listener, Middleware, Command): \`${typesPath}\``,
             `- Existing plugins (working examples): \`${pluginsDir}/\``,
             `- Existing extensions (tool examples): \`${extensionsDir}/\``,
-            `- To add a plugin: write a \`.ts\` file to \`${pluginsDir}/\`, call \`nest_reboot()\` to load`,
+            `- To add a plugin: write a \`.ts\` file to \`${pluginsDir}/\`, call \`nest_command("reload")\` to load`,
             `- To add a tool: write a pi extension to \`${extensionsDir}/\`, call \`nest_reboot()\` to register`,
+            `- \`bot!reload\` hot-reloads all plugins (disconnects listeners, reimports, reconnects)`,
+            `- \`bot!reboot\` restarts the pi session (reloads extensions, fresh context)`,
         );
 
         return lines.join("\n");
@@ -933,6 +956,67 @@ export class Kernel {
                 });
             });
         }
+    }
+
+    // ─── Accessors for server/dashboard ──────────────────────
+
+    // ─── Plugin Hot-Reload ─────────────────────────────────
+
+    /**
+     * Disconnect all plugin-registered listeners, clear plugin state,
+     * reimport plugins, and reconnect. Sessions are stopped and
+     * restarted so the new context (listeners, commands) takes effect.
+     */
+    async reloadPlugins(): Promise<{ loaded: string[]; errors: string[] }> {
+        const errors: string[] = [];
+
+        // 1. Stop all sessions (bridges)
+        await this.sessionManager.stopAll();
+
+        // 2. Disconnect all listeners
+        for (const listener of this.listeners) {
+            try { await listener.disconnect(); } catch {}
+        }
+
+        // 3. Clear plugin registrations (preserve core commands)
+        this.listeners = [];
+        this.middlewares = [];
+        for (const name of [...this.commands.keys()]) {
+            if (!this.coreCommands.has(name)) {
+                this.commands.delete(name);
+            }
+        }
+
+        // 4. Clear plugin routes on HTTP server (preserve kernel routes)
+        if (this.httpServer) {
+            const keepPaths = new Set([
+                "/health", "/api/ping",
+                "/api/auth/login", "/api/auth/logout",
+                "/api/block", "/api/block/upload", "/api/block/update", "/api/block/remove",
+                "/api/command", "/api/commands",
+            ]);
+            this.httpServer.clearPluginRoutes(keepPaths);
+        }
+
+        // 5. Reimport plugins with cache-busting
+        const pluginsDir = this.config.instance?.pluginsDir ?? "./plugins";
+        const api = this.buildAPI();
+        this.pluginNames = await loadPlugins(pluginsDir, api, true);
+        logger.info("Plugins reloaded", { count: this.pluginNames.length, names: this.pluginNames });
+
+        // 6. Reconnect all listeners
+        for (const listener of this.listeners) {
+            try {
+                listener.onMessage((msg) => this.handleMessage(msg));
+                await listener.connect();
+            } catch (err) {
+                const msg = `Failed to reconnect listener ${listener.name}: ${err}`;
+                logger.error(msg);
+                errors.push(msg);
+            }
+        }
+
+        return { loaded: this.pluginNames, errors };
     }
 
     // ─── Accessors for server/dashboard ──────────────────────

@@ -104,6 +104,25 @@ export class HttpServer {
         this.prefixRoutes.push({ prefix, method, handler });
     }
 
+    /**
+     * Clear all plugin-registered routes, prefix routes, and upgrade handlers.
+     * Preserves built-in routes (/health, /api/ping, /api/auth/*) and
+     * kernel-registered routes (block protocol, command API).
+     */
+    clearPluginRoutes(keepPaths: Set<string>): void {
+        for (const path of [...this.routes.keys()]) {
+            if (!keepPaths.has(path)) {
+                this.routes.delete(path);
+            }
+        }
+        this.prefixRoutes = [];
+        for (const path of [...this.upgradeHandlers.keys()]) {
+            if (!keepPaths.has(path)) {
+                this.upgradeHandlers.delete(path);
+            }
+        }
+    }
+
     setWsHandler(handler: WsRpcHandler): void {
         this.wsHandler = handler;
     }

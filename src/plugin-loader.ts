@@ -12,7 +12,7 @@ import * as logger from "./logger.js";
  *
  * Each plugin's default export receives a NestAPI instance.
  */
-export async function loadPlugins(pluginsDir: string, api: NestAPI): Promise<string[]> {
+export async function loadPlugins(pluginsDir: string, api: NestAPI, bustCache = false): Promise<string[]> {
     const dir = resolve(pluginsDir);
     const loaded: string[] = [];
 
@@ -50,7 +50,9 @@ export async function loadPlugins(pluginsDir: string, api: NestAPI): Promise<str
         if (!modulePath) continue;
 
         try {
-            const mod = await import(modulePath);
+            // Append a query string to bust Node's ESM module cache on reload
+            const importPath = bustCache ? `${modulePath}?t=${Date.now()}` : modulePath;
+            const mod = await import(importPath);
             const pluginFn: NestPlugin = mod.default;
 
             if (typeof pluginFn !== "function") {
