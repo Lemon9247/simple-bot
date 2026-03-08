@@ -9,7 +9,7 @@
  */
 import { Client, Intents, MessageAttachment } from "discord.js";
 import type { NestAPI, Listener, IncomingMessage, MessageOrigin, Attachment, OutgoingFile, Block } from "nest";
-import { splitMessage } from "nest/chunking";
+
 
 const MAX_ATTACHMENT_SIZE = 25 * 1024 * 1024;
 
@@ -32,13 +32,15 @@ class DiscordListener implements Listener {
     private nestToken: string;
     private notifyChannel: string | null;
     private allowedUsers: Set<string> | null;
+    private splitMessage: (text: string, maxLength?: number) => string[];
     private messageHandler?: (msg: IncomingMessage) => void;
     private emojiCache = new Map<string, { id: string; animated: boolean }>();
 
-    constructor(token: string, nestUrl: string, nestToken: string, notifyChannel?: string, allowedUsers?: string[]) {
+    constructor(token: string, nestUrl: string, nestToken: string, splitMessage: (text: string, maxLength?: number) => string[], notifyChannel?: string, allowedUsers?: string[]) {
         this.token = token;
         this.nestUrl = nestUrl;
         this.nestToken = nestToken;
+        this.splitMessage = splitMessage;
         this.notifyChannel = notifyChannel ?? null;
         this.allowedUsers = allowedUsers?.length ? new Set(allowedUsers) : null;
         this.client = new Client({
@@ -145,7 +147,7 @@ class DiscordListener implements Listener {
         }
 
         const resolvedText = this.resolveEmotes(text);
-        const chunks = splitMessage(resolvedText);
+        const chunks = this.splitMessage(resolvedText);
         const discordFiles = [
             ...(files?.map((f) => new MessageAttachment(f.data, f.filename)) ?? []),
             ...blockFiles,
@@ -259,7 +261,7 @@ export default function (nest: NestAPI): void {
     const nestUrl = serverConfig ? `http://${host}:${serverConfig.port}` : "http://127.0.0.1:8484";
     const nestToken = serverConfig?.token ?? "";
 
-    const listener = new DiscordListener(config.token, nestUrl, nestToken, config.notify, config.allowed_users);
+    const listener = new DiscordListener(config.token, nestUrl, nestToken, nest.utils.splitMessage, config.notify, config.allowed_users);
     if (config.allowed_users?.length) {
         nest.log.info("Discord: user filter active", { allowed: config.allowed_users });
     }

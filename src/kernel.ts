@@ -14,6 +14,7 @@ import type {
     ActivityEntry, JobDefinition, RouteHandler, Block,
 } from "./types.js";
 import * as logger from "./logger.js";
+import { splitMessage } from "./chunking.js";
 import { cleanupInbox, saveToInbox } from "./inbox.js";
 
 
@@ -170,6 +171,11 @@ export class Kernel {
                 info: logger.info,
                 warn: logger.warn,
                 error: logger.error,
+                getBuffer: logger.getLogBuffer,
+            },
+
+            utils: {
+                splitMessage,
             },
 
             instance: {

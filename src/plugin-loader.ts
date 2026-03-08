@@ -8,12 +8,10 @@ import * as logger from "./logger.js";
 const __srcDir = dirname(fileURLToPath(import.meta.url));
 const __projectDir = resolve(__srcDir, "..");
 
-/** Build jiti aliases so plugins can `import "nest"` from anywhere. */
+/** Build jiti aliases so plugins can `import type ... from "nest"`. */
 function buildAliases(): Record<string, string> {
     return {
         "nest": resolve(__srcDir, "types.ts"),
-        "nest/chunking": resolve(__srcDir, "chunking.ts"),
-        "nest/logger": resolve(__srcDir, "logger.ts"),
     };
 }
 

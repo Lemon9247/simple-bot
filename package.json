@@ -12,9 +12,7 @@
         "nest": "./dist/cli.js"
     },
     "exports": {
-        ".": "./src/types.ts",
-        "./chunking": "./src/chunking.ts",
-        "./logger": "./src/logger.ts"
+        ".": "./src/types.ts"
     },
     "scripts": {
         "prepare": "tsc",

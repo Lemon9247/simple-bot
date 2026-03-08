@@ -286,6 +286,12 @@ export interface NestAPI {
         info(message: string, data?: Record<string, unknown>): void;
         warn(message: string, data?: Record<string, unknown>): void;
         error(message: string, data?: Record<string, unknown>): void;
+        getBuffer(): Array<{ timestamp: string; level: string; message: string; [key: string]: unknown }>;
+    };
+
+    // Utilities
+    utils: {
+        splitMessage(text: string, maxLength?: number): string[];
     };
 
     // Instance

@@ -11,7 +11,7 @@
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { join, extname, resolve } from "node:path";
 import type { NestAPI } from "nest";
-import { getLogBuffer } from "nest/logger";
+
 
 const MIME_TYPES: Record<string, string> = {
     ".html": "text/html",
@@ -89,7 +89,7 @@ export default function (nest: NestAPI): void {
 
     nest.registerRoute("GET", "/api/logs", (_req, res) => {
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ entries: getLogBuffer() }));
+        res.end(JSON.stringify({ entries: nest.log.getBuffer() }));
     });
 
     // ─── Static File Serving ─────────────────────────────────
