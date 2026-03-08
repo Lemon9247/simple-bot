@@ -10,6 +10,14 @@ export function loadConfig(path: string): Config {
     return resolved as unknown as Config;
 }
 
+/** Load config without resolving env: references. For CLI commands (attach, status) that don't need secrets. */
+export function loadConfigRaw(path: string): Config {
+    const raw = readFileSync(path, "utf-8");
+    const parsed = yaml.load(raw) as Record<string, unknown>;
+    validate(parsed);
+    return parsed as unknown as Config;
+}
+
 function resolveEnvVars(obj: unknown): unknown {
     if (typeof obj === "string" && obj.startsWith("env:")) {
         const name = obj.slice(4);

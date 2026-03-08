@@ -439,9 +439,9 @@ async function cmdAttach(args: ParsedArgs): Promise<void> {
         process.exit(1);
     }
 
-    const { loadConfig } = await import("./config.js");
+    const { loadConfigRaw } = await import("./config.js");
     const configPath = join(ws.path, "config.yaml");
-    const config = loadConfig(configPath);
+    const config = loadConfigRaw(configPath);
 
     // Resolve which nest session to attach to
     const sessionNames = Object.keys(config.sessions);
@@ -536,8 +536,8 @@ async function cmdStatus(args: ParsedArgs): Promise<void> {
         process.exit(1);
     }
 
-    const { loadConfig } = await import("./config.js");
-    const config = loadConfig(join(ws.path, "config.yaml"));
+    const { loadConfigRaw } = await import("./config.js");
+    const config = loadConfigRaw(join(ws.path, "config.yaml"));
 
     const sessions = Object.keys(config.sessions);
     const agentDir = config.instance?.agentDir
