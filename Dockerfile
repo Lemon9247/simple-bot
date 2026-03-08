@@ -36,6 +36,7 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/src ./src
+COPY --from=build /app/docs ./docs
 
 # Entrypoint: LAN isolation + capability drop
 COPY scripts/entrypoint.sh /entrypoint.sh
