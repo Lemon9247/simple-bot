@@ -29,12 +29,14 @@ class DiscordListener implements Listener {
     private client: Client;
     private token: string;
     private notifyChannel: string | null;
+    private allowedUsers: Set<string> | null;
     private messageHandler?: (msg: IncomingMessage) => void;
     private emojiCache = new Map<string, { id: string; animated: boolean }>();
 
-    constructor(token: string, notifyChannel?: string) {
+    constructor(token: string, notifyChannel?: string, allowedUsers?: string[]) {
         this.token = token;
         this.notifyChannel = notifyChannel ?? null;
+        this.allowedUsers = allowedUsers?.length ? new Set(allowedUsers) : null;
         this.client = new Client({
             intents: [
                 Intents.FLAGS.GUILDS,
@@ -49,6 +51,7 @@ class DiscordListener implements Listener {
     async connect(): Promise<void> {
         this.client.on("messageCreate", async (message) => {
             if (!this.messageHandler || message.author.bot) return;
+            if (this.allowedUsers && !this.allowedUsers.has(message.author.username)) return;
 
             const attachments: Attachment[] = [];
             for (const [, att] of message.attachments) {
@@ -151,13 +154,21 @@ class DiscordListener implements Listener {
 // ─── Plugin Entry Point ──────────────────────────────────────
 
 export default function (nest: NestAPI): void {
-    const config = nest.config.discord as { token: string; notify?: string; channels?: Record<string, string> } | undefined;
+    const config = nest.config.discord as {
+        token: string;
+        notify?: string;
+        channels?: Record<string, string>;
+        allowed_users?: string[];
+    } | undefined;
     if (!config?.token) {
         nest.log.info("Discord plugin: no token configured, skipping");
         return;
     }
 
-    const listener = new DiscordListener(config.token, config.notify);
+    const listener = new DiscordListener(config.token, config.notify, config.allowed_users);
+    if (config.allowed_users?.length) {
+        nest.log.info("Discord: user filter active", { allowed: config.allowed_users });
+    }
     nest.registerListener(listener);
 
     // Attach channels to sessions
